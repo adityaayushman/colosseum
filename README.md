@@ -2,6 +2,8 @@
 
 **A tournament of Claude sub-agents for when one answer isn't good enough.**
 
+Project site: https://adityaayushman.github.io/colosseum/ (source in `docs/`; enable GitHub Pages from the `docs` folder on `main`).
+
 Colosseum gives the same task to many sub-agents, each with a different strategy card. It cheaply screens the drafts and sends only the strongest into a knockout bracket. There, rivals critique each other, revise their answers, and are scored by **two judges who read the answers in opposite order**. The answer that survives comes back to you with the record of every critique it beat.
 
 Works as a **Claude Code skill** and in **Claude Cowork**. Standard-library Python 3.8+, no dependencies, no API keys.

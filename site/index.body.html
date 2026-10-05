@@ -1,0 +1,596 @@
+<title>Colosseum</title>
+<meta name="description" content="A screened, double-judged tournament of Claude sub-agents. Many drafts, one answer that survived.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a tournament programme. Stadium-scoreboard display type over a cool paper ground;
+   one live bracket in the hero, then the evidence: pipeline, calibration demo, cost chart, card deck, comparison, install. */
+:root{
+  --paper:#F3F4F7; --surface:#FFFFFF; --sunk:#E9EBF1;
+  --ink:#11162B; --ink-2:#4A5068; --muted:#7D8399; --line:#D8DCE6;
+  --cobalt:#2B45E0; --cobalt-ink:#2238C4; --cobalt-soft:#E4E8FF;
+  --gold:#B8801A; --gold-soft:#F5EAD2;
+  --s1:#2B45E0; --s2:#B8801A;
+  --lose:#B7BCCB;
+  --display:"Big Shoulders Display","Arial Narrow","Roboto Condensed",Impact,sans-serif;
+  --body:"Public Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:6px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#0C0F1D; --surface:#141932; --sunk:#1B2140;
+  --ink:#EDEFF8; --ink-2:#A8AECA; --muted:#7A819E; --line:#272E4F;
+  --cobalt:#8494FF; --cobalt-ink:#A4B0FF; --cobalt-soft:#1E2656;
+  --gold:#E2B24F; --gold-soft:#33290F;
+  --s1:#6177F0; --s2:#B08422; --lose:#3D4466; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0C0F1D; --surface:#141932; --sunk:#1B2140;
+  --ink:#EDEFF8; --ink-2:#A8AECA; --muted:#7A819E; --line:#272E4F;
+  --cobalt:#8494FF; --cobalt-ink:#A4B0FF; --cobalt-soft:#1E2656;
+  --gold:#E2B24F; --gold-soft:#33290F;
+  --s1:#6177F0; --s2:#B08422; --lose:#3D4466; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:400 16px/1.6 var(--body);padding-inline:16px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto}
+a{color:var(--cobalt-ink);text-underline-offset:3px}
+a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--cobalt);outline-offset:3px;border-radius:4px}
+h1,h2,h3{font-family:var(--display);text-transform:uppercase;letter-spacing:.01em;line-height:.92;margin:0;text-wrap:balance}
+h2{font-size:clamp(2.2rem,5vw,3.6rem);font-weight:800}
+h3{font-size:1.45rem;font-weight:800;line-height:1}
+p{margin:0;max-width:65ch}
+.eyebrow{font:500 .74rem/1 var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--muted)}
+code,.mono{font-family:var(--mono);font-size:.88em}
+.num{font-variant-numeric:tabular-nums}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);margin-inline:-16px;padding:12px 16px}
+.top .wrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.mark{font:900 1.35rem/1 var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--ink);text-decoration:none;display:flex;gap:10px;align-items:center}
+.mark svg{width:22px;height:22px}
+.nav{display:flex;gap:18px;margin-left:auto;flex-wrap:wrap;font-size:.92rem}
+.nav a{color:var(--ink-2);text-decoration:none}.nav a:hover{color:var(--ink)}
+
+section{padding-block:72px;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+.head{display:grid;gap:14px;margin-bottom:36px}
+.head p{color:var(--ink-2);font-size:1.05rem}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:48px;align-items:center;padding-block:56px 64px}
+.hero h1{font-size:clamp(3rem,7.4vw,5.9rem);font-weight:900}
+.hero>*,.split>*,.deck>*{min-width:0}
+.hero h1 em{font-style:normal;color:var(--cobalt)}
+.hero h1 .gold{color:var(--gold)}
+.lede{font-size:1.14rem;color:var(--ink-2);margin-top:22px}
+.cmd{display:flex;align-items:center;gap:10px;margin-top:28px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 10px 10px 16px;max-width:100%;min-width:0}
+.cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;font-size:.9rem;color:var(--ink)}
+.cmd code b{color:var(--cobalt-ink);font-weight:500}
+.btn{font:600 .88rem/1 var(--body);border-radius:var(--r);padding:10px 14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ink-2)}
+.btn.primary{background:var(--cobalt);border-color:var(--cobalt);color:#fff}
+:root[data-theme="dark"] .btn.primary{color:#0C0F1D}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.primary{color:#0C0F1D}}
+.hero-meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:22px;color:var(--muted);font:500 .8rem/1.3 var(--mono)}
+.hero-meta span b{color:var(--ink);font-weight:500}
+
+.board{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 18px 14px;min-width:0}
+.board-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.board-top .eyebrow{color:var(--ink-2)}
+.scroll{overflow-x:auto}
+#bracket{display:block;width:100%;min-width:520px;height:auto}
+#bracket .box{fill:var(--sunk);stroke:var(--line)}
+#bracket .box.win{fill:var(--cobalt-soft);stroke:var(--cobalt)}
+#bracket .box.champ{fill:var(--gold-soft);stroke:var(--gold);stroke-width:1.5}
+#bracket .lbl{font:500 11px var(--body);fill:var(--ink)}
+#bracket .lbl.lost{fill:var(--muted)}
+#bracket .seed{font:500 10px var(--mono);fill:var(--muted)}
+#bracket .wire{fill:none;stroke:var(--lose);stroke-width:1.5}
+#bracket .wire.hot{stroke:var(--cobalt)}
+#bracket .wire.gold{stroke:var(--gold)}
+#bracket .note{font:500 9.5px var(--mono);fill:var(--ink-2)}
+#bracket .col{font:500 9.5px var(--mono);fill:var(--muted);letter-spacing:.12em}
+#bracket .champ-t{font:800 15px var(--display);fill:var(--ink);letter-spacing:.04em}
+#bracket g.rev{transition:opacity .35s ease}
+.board-foot{font:500 .76rem/1.4 var(--mono);color:var(--muted);margin-top:8px}
+
+/* pipeline */
+.pipe{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.step{padding:20px 18px 22px;border-right:1px solid var(--line);display:grid;gap:10px;align-content:start;min-width:0}
+.step:last-child{border-right:0}
+.step .n{font:500 .74rem/1 var(--mono);color:var(--muted)}
+.step h3{font-size:1.5rem}
+.step p{font-size:.9rem;color:var(--ink-2)}
+.step .calls{font:500 .78rem/1 var(--mono);color:var(--cobalt-ink);margin-top:auto;padding-top:6px}
+.step.final{background:var(--gold-soft)}
+.step.final .calls{color:var(--gold)}
+.pipe-sum{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px;color:var(--muted);font:500 .8rem/1.4 var(--mono)}
+
+/* calibration */
+.split{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:40px;align-items:start}
+.points{display:grid;gap:16px;margin-top:8px}
+.points div{display:grid;gap:4px;min-width:0}
+.points code{overflow-wrap:anywhere}
+.points b{font-weight:600}
+.points span{color:var(--ink-2);font-size:.95rem}
+.toggle{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface)}
+.toggle button{font:600 .85rem/1 var(--body);padding:10px 14px;border:0;background:transparent;color:var(--ink-2);cursor:pointer}
+.toggle button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;min-width:0}
+.panel-top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.verdict{font:500 .85rem/1.45 var(--mono);padding:10px 12px;border-radius:var(--r);margin-bottom:14px;border:1px solid var(--line)}
+.verdict.bad{background:var(--gold-soft);border-color:color-mix(in srgb,var(--gold) 45%,transparent)}
+.verdict.good{background:var(--cobalt-soft);border-color:color-mix(in srgb,var(--cobalt) 40%,transparent)}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{padding:7px 8px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:500 .72rem/1.2 var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+tr.in td{background:color-mix(in srgb,var(--cobalt) 9%,transparent)}
+tr.in td:first-child{box-shadow:inset 3px 0 0 var(--cobalt)}
+.pill{display:inline-block;font:500 .7rem/1 var(--mono);padding:4px 7px;border-radius:99px;border:1px solid var(--line);color:var(--ink-2)}
+.pill.ok{border-color:var(--cobalt);color:var(--cobalt-ink)}
+.pill.miss{border-color:var(--gold);color:var(--gold)}
+
+/* chart */
+.chart-wrap{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px 20px 16px}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:.86rem;color:var(--ink-2);margin-bottom:12px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:7px;vertical-align:-1px}
+#costs{display:block;width:100%;height:auto;min-width:480px}
+#costs .t{font:500 12px var(--body);fill:var(--ink)}
+#costs .ts{font:500 10.5px var(--mono);fill:var(--muted)}
+#costs .v{font:500 11px var(--mono);fill:var(--ink-2)}
+#costs .grid{stroke:var(--line);stroke-width:1}
+#costs .b1{fill:var(--s1)} #costs .b2{fill:var(--s2)}
+#costs .hit{fill:transparent;cursor:default}
+#costs g.bar:hover rect.b1,#costs g.bar:hover rect.b2{opacity:.85}
+.tip{position:fixed;z-index:9;pointer-events:none;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;font:500 .8rem/1.4 var(--body);box-shadow:0 6px 18px rgba(10,14,30,.14)}
+.chart-note{font:500 .78rem/1.5 var(--mono);color:var(--muted);margin-top:10px}
+
+/* deck */
+.deck{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:40px;align-items:start}
+.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-block:1px solid var(--line);margin:22px 0}
+.facts div{padding:14px 10px 14px 0;display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
+.facts b{font:800 2.2rem/1 var(--display)}
+.facts span{font-size:.82rem;color:var(--ink-2)}
+.facts .eq{grid-column:1/-1;border-top:1px solid var(--line);font:500 .85rem/1.4 var(--mono);color:var(--ink-2);padding:12px 0}
+.facts .eq b{font:inherit;color:var(--ink)}
+.card-out{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:10px;min-height:170px}
+.card-out .row{display:grid;grid-template-columns:86px minmax(0,1fr);gap:10px;font-size:.92rem}
+.card-out .row span:first-child{font:500 .72rem/1.6 var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.card-out .row b{font-weight:600}
+.card-out .row em{font-style:normal;color:var(--ink-2)}
+.grid13{display:grid;grid-template-columns:repeat(13,minmax(0,1fr));gap:3px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
+.grid13 button{aspect-ratio:1;border:0;border-radius:3px;background:var(--sunk);padding:0;cursor:pointer;max-width:100%}
+.grid13 button.on{background:var(--cobalt)}
+.grid13 button.sel{outline:2px solid var(--gold);outline-offset:1px}
+.grid13 button.share{background:color-mix(in srgb,var(--gold) 55%,var(--sunk))}
+.grid-cap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:10px;font:500 .78rem/1.4 var(--mono);color:var(--muted)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+
+/* compare */
+.cmp{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.cmp table{font-size:.94rem}
+.cmp th,.cmp td{padding:13px 16px;white-space:normal}
+.cmp td:first-child{color:var(--ink-2);width:30%}
+.cmp td:nth-child(2){color:var(--muted);width:28%}
+.cmp td:nth-child(3){font-weight:600}
+.cmp td:nth-child(3) .up{display:inline-block;font:500 .68rem/1 var(--mono);color:var(--cobalt-ink);border:1px solid var(--cobalt);border-radius:99px;padding:3px 6px;margin-left:8px;vertical-align:2px}
+.cmp tr:last-child td{border-bottom:0}
+
+/* install */
+.install{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.inst{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:grid;gap:12px;align-content:start;min-width:0}
+.inst p{color:var(--ink-2);font-size:.93rem}
+pre{margin:0;background:var(--sunk);border-radius:var(--r);padding:14px;overflow-x:auto;font:400 .82rem/1.6 var(--mono);color:var(--ink)}
+.inst .btn{justify-self:start}
+.flags{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:20px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.flags div{padding:14px 16px;border-right:1px solid var(--line);display:grid;gap:4px}
+.flags div:last-child{border-right:0}
+.flags code{color:var(--cobalt-ink)}
+.flags span{font-size:.85rem;color:var(--ink-2)}
+
+footer{padding-block:36px 48px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:.86rem}
+footer p{max-width:70ch}
+
+@media (max-width:900px){
+  .hero,.split,.deck{grid-template-columns:1fr}
+  .pipe{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .step{border-bottom:1px solid var(--line)}
+  .step:nth-child(2n){border-right:0}
+  .install{grid-template-columns:1fr}
+  .flags{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .flags div:nth-child(2n){border-right:0}
+  .flags div:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  section{padding-block:56px}
+}
+@media (max-width:520px){
+  .pipe{grid-template-columns:1fr}
+  .step{border-right:0}
+  .facts b{font-size:1.8rem}
+  .nav{gap:12px;font-size:.86rem}
+  .cmd{flex-wrap:wrap}
+  .facts{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="#top" aria-label="Colosseum home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="6" height="4" rx="1" fill="var(--cobalt)"/><rect x="2" y="17" width="6" height="4" rx="1" fill="var(--cobalt)"/><path d="M8 5h3v14H8M11 12h5" fill="none" stroke="var(--ink)" stroke-width="1.6"/><rect x="16" y="10" width="6" height="4" rx="1" fill="var(--gold)"/></svg>
+      Colosseum
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#calibration">Calibration</a>
+      <a href="#cost">Cost</a>
+      <a href="#cards">Cards</a>
+      <a href="#compare">Compared</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/adityaayushman/colosseum">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap" id="top">
+
+<section class="hero" aria-labelledby="h1">
+  <div>
+    <p class="eyebrow">A Claude skill · v1.2 · MIT</p>
+    <h1 id="h1" style="margin-top:16px">Thirty-two drafts. <em>Eight</em> in the bracket. <span class="gold">One answer</span> left standing.</h1>
+    <p class="lede">When Claude's first answer isn't good enough, Colosseum gives the same task to dozens of sub-agents, each with its own strategy card. It keeps only the drafts that 3 independent reviewers rate highest. Those drafts then critique each other and revise, and 2 judges reading in opposite order score every match.</p>
+    <div class="cmd" role="group" aria-label="Example command">
+      <code id="cmd-text"><b>/colosseum</b> --quick write the onboarding email for new users</code>
+      <button class="btn" type="button" data-copy="cmd-text">Copy</button>
+    </div>
+    <div class="hero-meta" aria-label="Key figures">
+      <span><b class="num">2,704</b> strategy cards</span>
+      <span><b class="num">~96</b> calls for 32 drafts</span>
+      <span><b class="num">31</b> tests passing</span>
+    </div>
+  </div>
+
+  <figure class="board" style="margin:0" aria-labelledby="board-cap">
+    <div class="board-top">
+      <span class="eyebrow" id="board-cap">Bracket · top 8 after screening</span>
+      <button class="btn primary" type="button" id="replay">Run another tournament</button>
+    </div>
+    <div class="scroll"><svg id="bracket" viewBox="0 0 600 344" role="img" aria-label="An eight-seed knockout bracket ending in one champion"></svg></div>
+    <figcaption class="board-foot" id="board-foot">Seeded by screen rank: 1 meets 8, so the two strongest drafts can only meet in the final.</figcaption>
+  </figure>
+</section>
+
+<section id="how" aria-labelledby="how-h">
+  <div class="head">
+    <p class="eyebrow">How a run works</p>
+    <h2 id="how-h">Six stages, in order</h2>
+    <p>Every sub-agent reads the same task file, word for word. Only the strategy card changes. The engine is one Python file using only the standard library. It keeps the whole run on disk, so a run can stop and pick up where it left off.</p>
+  </div>
+  <div class="pipe">
+    <div class="step"><span class="n">1</span><h3>Draft</h3><p>Each drafter answers with a different angle, method and priority.</p><span class="calls num">32 calls</span></div>
+    <div class="step"><span class="n">2</span><h3>Screen</h3><p>3 reviewers score each draft. Each reviewer's scores are standardised, and the top 8 go through.</p><span class="calls num">18 calls</span></div>
+    <div class="step"><span class="n">3</span><h3>Critique</h3><p>Rivals look for errors, gaps and inputs that break the answer, up to 8 points each.</p><span class="calls num">14 calls</span></div>
+    <div class="step"><span class="n">4</span><h3>Revise</h3><p>Each answer accepts a point and fixes it, or rejects it with evidence.</p><span class="calls num">14 calls</span></div>
+    <div class="step"><span class="n">5</span><h3>Judge</h3><p>2 judges read in swapped order. If they disagree, a third decides. The final always gets 3.</p><span class="calls num">15 calls + tiebreaks</span></div>
+    <div class="step final"><span class="n">6</span><h3>Merge</h3><p>The top 3 are merged. The merge is kept only if both judges prefer it to the winner.</p><span class="calls num">3 calls</span></div>
+  </div>
+  <div class="pipe-sum"><span>Default run: 32 drafters → 8 → 4 → 2 → 1</span><span class="num">≈ 96 sub-agent calls, plus a tiebreak only when judges disagree</span></div>
+</section>
+
+<section id="calibration" aria-labelledby="cal-h">
+  <div class="split">
+    <div>
+      <div class="head" style="margin-bottom:22px">
+        <p class="eyebrow">Accuracy · screening</p>
+        <h2 id="cal-h">A lenient reviewer can't push a weak draft through</h2>
+        <p>Some reviewers score generously and some score harshly. A plain average rewards drafts that happened to land with a generous reviewer. Colosseum converts each reviewer's scores to z-scores first, so only the ranking inside each batch counts.</p>
+      </div>
+      <div class="points">
+        <div><b>The setup on the right</b><span>12 drafts with a known true order (D1 is best). 6 reviewers each score 6 drafts, so every draft gets 3 reviews. Half the reviewers add 40 points to everything.</span></div>
+        <div><b>What to look for</b><span>Switch between the two methods and see which 4 drafts reach the bracket. The same scenario is in the test suite as <code>test_calibrated_ranking_beats_lenient_screener</code>.</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-top">
+        <div class="toggle" role="group" aria-label="Ranking method">
+          <button type="button" id="m-raw" aria-pressed="false">Raw average</button>
+          <button type="button" id="m-cal" aria-pressed="true">Calibrated</button>
+        </div>
+        <button class="btn" type="button" id="reshuffle">Reshuffle reviewers</button>
+      </div>
+      <div class="verdict" id="verdict" role="status"></div>
+      <div class="scroll"><table id="cal-table" aria-label="Screening results"></table></div>
+    </div>
+  </div>
+</section>
+
+<section id="cost" aria-labelledby="cost-h">
+  <div class="head">
+    <p class="eyebrow">Cost · sub-agent calls per run</p>
+    <h2 id="cost-h">Same field size, a fraction of the calls</h2>
+    <p>In a full knockout bracket, every drafter goes through critique, revision and judging. Colosseum screens first, so only the top 8 to 32 drafts do. That is where the expensive calls go.</p>
+  </div>
+  <div class="chart-wrap">
+    <div class="legend" aria-hidden="true"><span><i style="background:var(--s1)"></i>Colosseum (screen, then bracket)</span><span><i style="background:var(--s2)"></i>Full knockout bracket</span></div>
+    <div class="scroll"><svg id="costs" viewBox="0 0 760 300" role="img" aria-label="Sub-agent calls by preset. Quick, 12 drafters: Colosseum 40, full bracket 67. Default, 32: 96 versus 187. Full, 100: 245 versus 595. Max, 256: 575 versus 1,531."></svg></div>
+    <p class="chart-note">From the engine's planner (<code>colosseum.py plan</code>). A full bracket costs n + 5(n−1) calls. The Colosseum figures include the 3 merge calls and the 3-judge final.</p>
+  </div>
+</section>
+
+<section id="cards" aria-labelledby="cards-h">
+  <div class="deck">
+    <div>
+      <div class="head" style="margin-bottom:0">
+        <p class="eyebrow">Diversity · strategy cards</p>
+        <h2 id="cards-h">No two drafters think the same way</h2>
+        <p>A card combines an angle, a method and a priority. Up to 169 drafters, cards come from an orthogonal Latin square, so any two drafters share at most one of the three parts.</p>
+      </div>
+      <div class="facts">
+        <div><b class="num">16</b><span>angles: Pre-mortem, Constraint map, Put numbers on it…</span></div>
+        <div><b class="num">13</b><span>methods: Checks first, Red-team pass, Verify every claim…</span></div>
+        <div><b class="num">13</b><span>priorities: Correctness, Evidence-backed, Scope discipline…</span></div>
+        <div class="eq">16 × 13 × 13 = <b>2,704 cards</b>. Strategies that win more often are dealt more often in later runs, and every strategy still gets a turn.</div>
+      </div>
+      <div class="card-out" id="card-out" aria-live="polite"></div>
+    </div>
+    <div>
+      <div class="grid13" id="grid13" role="group" aria-label="13 by 13 card grid: rows are angles, columns are methods"></div>
+      <div class="grid-cap"><span>Rows: angles · Columns: methods · Each cell sets a priority</span><span id="grid-count" class="num"></span></div>
+      <div class="actions">
+        <button class="btn primary" type="button" id="deal">Deal 32 cards</button>
+        <button class="btn" type="button" id="deal100">Deal 100</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="compare" aria-labelledby="cmp-h">
+  <div class="head">
+    <p class="eyebrow">Compared</p>
+    <h2 id="cmp-h">Measured against Arena</h2>
+    <p>Arena is an open-source skill that runs a flat 100-agent knockout. Colosseum is a separate implementation, built from scratch around screening, calibration and verification.</p>
+  </div>
+  <div class="cmp">
+    <table>
+      <thead><tr><th>What</th><th>Arena</th><th>Colosseum</th></tr></thead>
+      <tbody>
+        <tr><td>Strategy cards</td><td class="num">2,160</td><td class="num">2,704<span class="up">more</span></td></tr>
+        <tr><td>No two agents share two of three card parts</td><td>up to 144 agents</td><td>up to 169 agents<span class="up">more</span></td></tr>
+        <tr><td>Largest run</td><td class="num">100 agents</td><td class="num">256 agents<span class="up">more</span></td></tr>
+        <tr><td>Calls for 100 agents</td><td class="num">595</td><td class="num">~245<span class="up">fewer</span></td></tr>
+        <tr><td>Reviews before the bracket</td><td>none</td><td>3 per draft, calibrated</td></tr>
+        <tr><td>Judges per match</td><td>1</td><td>2 in swapped order, 3 to break a tie</td></tr>
+        <tr><td>Judges in the final</td><td>1</td><td>always 3</td></tr>
+        <tr><td>Fatal flaw rule</td><td>the judge says so</td><td>the judge has to quote the failing part</td></tr>
+        <tr><td>Code tasks</td><td>judged on reading</td><td>your test command decides</td></tr>
+        <tr><td>Combine the best answers</td><td>no</td><td>yes, kept only if both judges prefer it</td></tr>
+        <tr><td>Models per role, learning, dashboard</td><td>no</td><td>yes</td></tr>
+        <tr><td>Tests</td><td class="num">27</td><td class="num">31</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="install" aria-labelledby="inst-h">
+  <div class="head">
+    <p class="eyebrow">Install</p>
+    <h2 id="inst-h">Two ways to run it</h2>
+  </div>
+  <div class="install">
+    <div class="inst">
+      <h3>Claude Code</h3>
+      <p>Copy the skill folder into your skills directory, then run <code>/colosseum</code>.</p>
+      <pre id="i-code">git clone https://github.com/adityaayushman/colosseum.git
+cp -r colosseum/skills/colosseum ~/.claude/skills/</pre>
+      <button class="btn" type="button" data-copy="i-code">Copy commands</button>
+    </div>
+    <div class="inst">
+      <h3>Claude Cowork</h3>
+      <p>Save <code>cowork/SKILL.md</code> as a skill. The engine is embedded inside it and unpacks itself on first use, after a SHA-256 check. Nothing to download.</p>
+      <pre id="i-run">/colosseum --kind code --test-cmd "pytest -q" \
+  --project /path/to/repo fix the flaky test</pre>
+      <button class="btn" type="button" data-copy="i-run">Copy example</button>
+    </div>
+  </div>
+  <div class="flags">
+    <div><code>--quick</code><span>12 drafters, top 4, ~40 calls</span></div>
+    <div><code>--full</code><span>100 drafters, top 16, ~245 calls</span></div>
+    <div><code>--budget</code><span>haiku drafts, sonnet judges</span></div>
+    <div><code>--merge 0</code><span>skip combining finalists</span></div>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <p>Colosseum is MIT licensed. © 2026 Aditya Ayushman Sahoo. Figures on this page come from the engine's planner and its test suite, which uses simulated agents. Results from real runs show up in your own dashboard.</p>
+  <a href="https://github.com/adityaayushman/colosseum">github.com/adityaayushman/colosseum</a>
+</footer>
+
+<div class="tip" id="tip" hidden></div>
+
+<script>
+(function(){
+"use strict";
+const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+const NS = "http://www.w3.org/2000/svg";
+function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function el(tag,attrs,text){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(text!=null)e.textContent=text;return e}
+const tip=document.getElementById("tip");
+function showTip(e,html){tip.innerHTML=html;tip.hidden=false;const w=tip.offsetWidth;tip.style.left=Math.min(e.clientX+14,innerWidth-w-10)+"px";tip.style.top=(e.clientY+16)+"px"}
+function hideTip(){tip.hidden=true}
+
+/* copy buttons */
+document.querySelectorAll("[data-copy]").forEach(b=>{
+  b.addEventListener("click",()=>{
+    const src=document.getElementById(b.dataset.copy);const txt=src.textContent;
+    const done=()=>{const o=b.textContent;b.textContent="Copied";setTimeout(()=>b.textContent=o,1400)};
+    const fallback=()=>{const r=document.createRange();r.selectNodeContents(src);const s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent="Selected, press Ctrl+C";setTimeout(()=>b.textContent="Copy",2000)};
+    try{navigator.clipboard.writeText(txt).then(done,fallback)}catch(err){fallback()}
+  });
+});
+
+/* ---------- bracket ---------- */
+const ANG=["Pre-mortem","Constraint map","Work backwards","Put numbers on it","Boundary test","Skeptic","Example first","Trade-off map","Ground truth","Teach it","Decompose","Prior art"];
+const svg=document.getElementById("bracket");
+const BW=128,BH=26,COLX=[24,186,348,470],Y8=[];
+for(let i=0;i<8;i++)Y8.push(30+i*38);
+const order=[1,8,4,5,2,7,3,6];
+let tSeed=7;
+function playBracket(animate){
+  const r=rng(tSeed++);
+  const names=ANG.slice().sort(()=>r()-.5).slice(0,8);
+  let players=order.map((s,i)=>({seed:s,name:names[s-1],y:Y8[i]}));
+  svg.innerHTML="";
+  ["QUARTER","SEMI","FINAL","CHAMPION"].forEach((t,i)=>svg.appendChild(el("text",{x:COLX[i]+(i==3?0:0),y:14,class:"col"},t)));
+  const layers=[];const rounds=[];
+  let cur=players;
+  for(let round=0;round<3;round++){
+    const next=[];const g=el("g",{class:"rev"});rounds.push(g);
+    for(let m=0;m<cur.length;m+=2){
+      const a=cur[m],b=cur[m+1];
+      const pa=1/(1+Math.exp((a.seed-b.seed)*0.45));
+      const aw=r()<pa;const w=aw?a:b;const l=aw?b:a;
+      const final=round==2;
+      let note;
+      if(final){note=r()<.7?"panel 3–0":"panel 2–1"}else{note=r()<.78?"2–0":"1–1 · tiebreak"}
+      w.won=round; l.lost=round;
+      const ny=(a.y+b.y)/2;
+      const x1=COLX[round]+BW, x2=COLX[round+1], xm=x1+14;
+      const cls=final?"wire gold":"wire hot";
+      g.appendChild(el("path",{d:`M${x1} ${w.y+BH/2}H${xm}V${ny+BH/2}H${x2}`,class:cls}));
+      g.appendChild(el("path",{d:`M${x1} ${l.y+BH/2}H${xm}V${ny+BH/2}`,class:"wire"}));
+      g.appendChild(el("text",{x:xm+4,y:ny+BH/2-5,class:"note"},note));
+      next.push({seed:w.seed,name:w.name,y:ny});
+    }
+    layers.push(cur);cur=next;
+  }
+  // boxes per column
+  layers.forEach((col,ci)=>{
+    col.forEach(p=>{
+      const lost=(ci==0&&p.lost===0)||(ci==1&&p.lost===1)||(ci==2&&p.lost===2);
+      const won=!lost;
+      const g=el("g",{});
+      g.appendChild(el("rect",{x:COLX[ci],y:p.y,width:BW,height:BH,rx:4,class:"box"+(won&&ci>0?" win":"")}));
+      g.appendChild(el("text",{x:COLX[ci]+8,y:p.y+17,class:"seed"},"#"+p.seed));
+      g.appendChild(el("text",{x:COLX[ci]+30,y:p.y+17,class:"lbl"+(lost?" lost":"")},p.name));
+      (ci==0?svg:rounds[ci-1]).appendChild(g);
+    });
+  });
+  const ch=cur[0];
+  const cg=el("g",{class:"rev"});
+  cg.appendChild(el("rect",{x:COLX[3],y:ch.y-12,width:BW-2,height:BH+24,rx:5,class:"box champ"}));
+  cg.appendChild(el("text",{x:COLX[3]+10,y:ch.y+6,class:"seed"},"#"+ch.seed+" · merge check next"));
+  cg.appendChild(el("text",{x:COLX[3]+10,y:ch.y+26,class:"champ-t"},ch.name.toUpperCase()));
+  rounds.push(cg);
+  rounds.forEach(g=>svg.appendChild(g));
+  if(animate&&!reduce){
+    rounds.forEach(g=>g.style.opacity="0");
+    rounds.forEach((g,i)=>setTimeout(()=>{g.style.opacity="1"},220+i*420));
+  }
+  document.getElementById("board-foot").textContent="Champion: seed #"+ch.seed+" ("+ch.name+"). Seeded by screen rank, so 1 and 2 can only meet in the final. Demo data.";
+}
+playBracket(false);
+document.getElementById("replay").addEventListener("click",()=>playBracket(true));
+
+/* ---------- calibration ---------- */
+let calSeed=2, mode="cal";
+function calRun(seed){
+  const r=rng(seed);const ids=[...Array(12)].map((_,i)=>i);const batches=[];
+  for(let rep=0;rep<3;rep++){const o=ids.slice();for(let i=o.length-1;i>0;i--){const j=Math.floor(r()*(i+1));[o[i],o[j]]=[o[j],o[i]]}batches.push(o.slice(0,6),o.slice(6))}
+  const raw=ids.map(()=>[]),z=ids.map(()=>[]),len=ids.map(()=>0);
+  batches.forEach((b,bi)=>{const off=bi%2==0?40:0;const sc=b.map(d=>88-4*d+off+Math.round((r()-.5)*4));
+    const m=sc.reduce((a,c)=>a+c)/6;const sd=Math.sqrt(sc.reduce((a,c)=>a+(c-m)**2,0)/6);
+    b.forEach((d,k)=>{raw[d].push(sc[k]);z[d].push(sd?(sc[k]-m)/sd:0);if(off)len[d]++})});
+  const avg=a=>a.reduce((x,y)=>x+y,0)/a.length;
+  return ids.map(d=>({d,raw:avg(raw[d]),z:avg(z[d]),lenient:len[d]}));
+}
+function renderCal(){
+  const rows=calRun(calSeed);
+  const key=mode=="raw"?"raw":"z";
+  const ranked=rows.slice().sort((a,b)=>b[key]-a[key]);
+  const top=new Set(ranked.slice(0,4).map(x=>x.d));
+  const hits=[0,1,2,3].filter(d=>top.has(d)).length;
+  const v=document.getElementById("verdict");
+  const wrong=ranked.slice(0,4).filter(x=>x.d>3).map(x=>"D"+(x.d+1));
+  if(hits==4){v.className="verdict good";v.textContent=(mode=="raw"?"Raw average":"Calibrated")+": all 4 of the true top 4 reach the bracket."}
+  else{v.className="verdict bad";v.textContent=(mode=="raw"?"Raw average":"Calibrated")+": "+hits+" of the true top 4 reach the bracket. "+wrong.join(" and ")+" got in on lenient reviews."}
+  const t=document.getElementById("cal-table");
+  let h='<thead><tr><th>Draft</th><th class="r">True rank</th><th class="r">Lenient reviews</th><th class="r">Raw avg</th><th class="r">Calibrated</th><th>Result</th></tr></thead><tbody>';
+  ranked.forEach(x=>{const inn=top.has(x.d);const true4=x.d<4;
+    h+='<tr class="'+(inn?"in":"")+'"><td>D'+(x.d+1)+'</td><td class="r">'+(x.d+1)+'</td><td class="r">'+x.lenient+' of 3</td><td class="r">'+x.raw.toFixed(1)+'</td><td class="r">'+(x.z>=0?"+":"")+x.z.toFixed(2)+'</td><td>'+
+    (inn?(true4?'<span class="pill ok">advances</span>':'<span class="pill miss">advances, wrongly</span>'):(true4?'<span class="pill miss">cut, wrongly</span>':'<span class="pill">cut</span>'))+'</td></tr>'});
+  t.innerHTML=h+'</tbody>';
+  document.getElementById("m-raw").setAttribute("aria-pressed",mode=="raw");
+  document.getElementById("m-cal").setAttribute("aria-pressed",mode=="cal");
+}
+document.getElementById("m-raw").addEventListener("click",()=>{mode="raw";renderCal()});
+document.getElementById("m-cal").addEventListener("click",()=>{mode="cal";renderCal()});
+document.getElementById("reshuffle").addEventListener("click",()=>{calSeed=Math.floor(Math.random()*1e6);renderCal()});
+renderCal();
+
+/* ---------- cost chart ---------- */
+(function(){
+  const data=[["Quick",12,40,67],["Default",32,96,187],["Full",100,245,595],["Max",256,575,1531]];
+  const c=document.getElementById("costs");
+  const L=150,R=730,top=18,rowH=66,bh=20,max=1600;
+  const sx=v=>L+(R-L)*v/max;
+  [0,400,800,1200,1600].forEach(t=>{c.appendChild(el("line",{x1:sx(t),x2:sx(t),y1:top-6,y2:top+rowH*4-8,class:"grid"}));
+    c.appendChild(el("text",{x:sx(t),y:top+rowH*4+8,"text-anchor":"middle",class:"ts"},t.toLocaleString("en-US")))});
+  data.forEach((d,i)=>{
+    const y=top+i*rowH;
+    c.appendChild(el("text",{x:0,y:y+17,class:"t"},d[0]));
+    c.appendChild(el("text",{x:0,y:y+34,class:"ts"},d[1]+" drafters"));
+    [[d[2],"b1","Colosseum"],[d[3],"b2","Full bracket"]].forEach(([v,cls,name],k)=>{
+      const yy=y+k*(bh+3);const w=Math.max(4,sx(v)-L);
+      const g=el("g",{class:"bar"});
+      g.appendChild(el("path",{d:`M${L} ${yy}H${L+w-4}a4 4 0 0 1 4 4v${bh-8}a4 4 0 0 1 -4 4H${L}Z`,class:cls}));
+      g.appendChild(el("text",{x:L+w+8,y:yy+14,class:"v"},v.toLocaleString("en-US")));
+      const hit=el("rect",{x:L,y:yy-2,width:R-L,height:bh+4,class:"hit"});
+      g.appendChild(hit);
+      const save=Math.round((1-d[2]/d[3])*100);
+      hit.addEventListener("mousemove",e=>showTip(e,"<b>"+d[0]+" · "+d[1]+" drafters</b><br>"+name+": "+v.toLocaleString("en-US")+" calls"+(k==0?"<br>"+save+"% fewer than a full bracket":"")));
+      hit.addEventListener("mouseleave",hideTip);
+      c.appendChild(g);
+    });
+  });
+})();
+
+/* ---------- card deck ---------- */
+const ANGLES=["Ground truth","Work backwards","Pre-mortem","Expert panel","Smallest core","Example first","Decompose","Skeptic","User journey","Trade-off map","Constraint map","Prior art","Stakeholder lens","Put numbers on it","Boundary test","Teach it"];
+const METHODS=["One careful pass","Draft, review, fix","Plan, then write","Checks first","Three sketches","Gather, then synthesise","Expand, then cut","Reviewer questions","Outline, then fill","Prototype, then refine","Red-team pass","Two candidates","Verify every claim"];
+const PRIOS=["Correctness above all","Simplicity","Completeness","Edge cases","Usable today","Reader clarity","Safe defaults","Efficiency","Robustness","Maintainability","Evidence-backed","Scope discipline","Risk-aware"];
+const grid=document.getElementById("grid13");const cells=[];
+let dealt=new Set(),K=5,angRows=ANGLES.slice(0,13),selected=null;
+for(let i=0;i<13;i++)for(let j=0;j<13;j++){const b=document.createElement("button");b.type="button";b.dataset.i=i;b.dataset.j=j;grid.appendChild(b);cells.push(b)}
+function cardOf(i,j){return{a:angRows[i],m:METHODS[j],p:PRIOS[(i*K+j)%13]}}
+function deal(n){
+  const r=rng(Math.floor(Math.random()*1e6));
+  angRows=ANGLES.slice().sort(()=>r()-.5).slice(0,13);K=1+Math.floor(r()*11);
+  const diags=[...Array(13).keys()].sort(()=>r()-.5);dealt=new Set();
+  for(const t of diags){for(let i=0;i<13&&dealt.size<n;i++)dealt.add(i*13+(i+t)%13);if(dealt.size>=n)break}
+  selected=null;paint();
+  const first=[...dealt][0];select(Math.floor(first/13),first%13);
+}
+function paint(){
+  cells.forEach(b=>{const id=+b.dataset.i*13+ +b.dataset.j;b.className=dealt.has(id)?"on":"";
+    const c=cardOf(+b.dataset.i,+b.dataset.j);b.setAttribute("aria-label",c.a+", "+c.m+", "+c.p+(dealt.has(id)?" (dealt)":""))});
+  document.getElementById("grid-count").textContent=dealt.size+" dealt of 169";
+}
+function select(i,j){
+  selected=[i,j];const c=cardOf(i,j);let maxShare=0,shareOne=0;
+  cells.forEach(b=>{const bi=+b.dataset.i,bj=+b.dataset.j,id=bi*13+bj;b.classList.remove("sel","share");
+    if(bi==i&&bj==j){b.classList.add("sel");return}
+    if(!dealt.has(id))return;const o=cardOf(bi,bj);const s=(o.a==c.a)+(o.m==c.m)+(o.p==c.p);maxShare=Math.max(maxShare,s);if(s==1)shareOne++});
+  const isDealt=dealt.has(i*13+j);
+  document.getElementById("card-out").innerHTML='<span class="eyebrow">'+(isDealt?"Dealt card":"Card in the deck (not dealt this run)")+'</span>'+
+    '<div class="row"><span>Angle</span><b>'+c.a+'</b></div><div class="row"><span>Method</span><b>'+c.m+'</b></div><div class="row"><span>Priority</span><b>'+c.p+'</b></div>'+
+    (isDealt?'<div class="row"><span>Overlap</span><em>Shares one part with '+shareOne+' other dealt cards and two or more parts with none.</em></div>':'');
+}
+grid.addEventListener("click",e=>{const b=e.target.closest("button");if(b)select(+b.dataset.i,+b.dataset.j)});
+document.getElementById("deal").addEventListener("click",()=>deal(32));
+document.getElementById("deal100").addEventListener("click",()=>deal(100));
+deal(32);
+})();
+</script>
