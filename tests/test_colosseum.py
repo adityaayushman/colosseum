@@ -214,7 +214,7 @@ class TestRuns(Base):
     def test_tests_decide_matches(self):
         proj = os.path.join(self.tmp, "proj")
         C.wr(os.path.join(proj, "flag.txt"), "no")
-        cmd = "python3 -c \"import sys; sys.exit(0 if open('flag.txt').read().strip()=='ok' else 1)\""
+        cmd = "\"%s\" -c \"import sys; sys.exit(0 if open('flag.txt').read().strip()=='ok' else 1)\"" % sys.executable
         run_cli("init", "--quick", "--seed", "7", "--task-file", "task.md", "--kind", "code", "--test-cmd", cmd, "--project", proj)
         good = {"c02", "c05"}
         drive(Sim(5, passing=lambda c: c in good))
@@ -258,7 +258,7 @@ class TestRuns(Base):
     def test_merge_rejected_when_it_breaks_tests(self):
         proj = os.path.join(self.tmp, "proj")
         C.wr(os.path.join(proj, "flag.txt"), "no")
-        cmd = "python3 -c \"import sys; sys.exit(0 if open('flag.txt').read().strip()=='ok' else 1)\""
+        cmd = "\"%s\" -c \"import sys; sys.exit(0 if open('flag.txt').read().strip()=='ok' else 1)\"" % sys.executable
         run_cli("init", "--quick", "--seed", "14", "--task-file", "task.md", "--kind", "code", "--test-cmd", cmd, "--project", proj)
         drive(Sim(10, judge_mode="prefer-merged", passing=lambda c: c in {"c01", "c04", "c07", "c09"}))
         d, st = C.load()

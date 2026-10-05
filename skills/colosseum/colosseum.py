@@ -351,7 +351,7 @@ def save(d, st):
 
 
 def self_cmd():
-    return 'python3 "%s"' % os.path.abspath(__file__)
+    return '%s "%s"' % ("python" if sys.platform == "win32" else "python3", os.path.abspath(__file__))
 
 
 # ---------------------------------------------------------------- learning

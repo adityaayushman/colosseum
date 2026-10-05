@@ -12,10 +12,10 @@ User input after the command: `$ARGUMENTS` (blank or a placeholder means: take t
 
 ## The engine
 
-The engine is embedded at the end of this file (section "Embedded engine", SHA-256 `152aca2e7709254d1607e17d6f79fd11005a1397b90e221deed43a5c53a36c0e`). Before the first command, make sure it is unpacked:
+The engine is embedded at the end of this file (section "Embedded engine", SHA-256 `66f4ac5f301ee1add0cc180de760ea1a55fb222d974782ff2535f06e1bd1eb1e`). Before the first command, make sure it is unpacked:
 
 ```bash
-E="$HOME/.cache/colosseum/colosseum.py"; SHA=152aca2e7709254d1607e17d6f79fd11005a1397b90e221deed43a5c53a36c0e
+E="$HOME/.cache/colosseum/colosseum.py"; SHA=66f4ac5f301ee1add0cc180de760ea1a55fb222d974782ff2535f06e1bd1eb1e
 check() { [ -f "$E" ] && [ "$(sha256sum "$E" | cut -d' ' -f1)" = "$SHA" ]; }
 if ! check; then
   mkdir -p "$(dirname "$E")"
@@ -468,7 +468,7 @@ def save(d, st):
 
 
 def self_cmd():
-    return 'python3 "%s"' % os.path.abspath(__file__)
+    return '%s "%s"' % ("python" if sys.platform == "win32" else "python3", os.path.abspath(__file__))
 
 
 # ---------------------------------------------------------------- learning
