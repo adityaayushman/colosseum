@@ -1,0 +1,193 @@
+import io
+import json
+import os
+import random
+import shutil
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "skills", "colosseum"))
+import colosseum as C  # noqa: E402
+
+
+def run_cli(*args):
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = C.main(list(args))
+    return rc, buf.getvalue()
+
+
+class Sim:
+    """Stands in for sub-agents: answers every pending job of the current phase."""
+
+    def __init__(self, seed=0, judge_mode="random", drop=(), passing=None):
+        self.rng = random.Random(seed)
+        self.judge_mode = judge_mode
+        self.drop = set(drop)          # job ids that never produce output
+        self.passing = passing          # function cid -> bool for code tasks
+
+    def scores(self, a, b, prefer):
+        hi = {"accuracy": 9, "coverage": 9, "resilience": 8, "actionability": 8, "fatal": False}
+        lo = {"accuracy": 5, "coverage": 6, "resilience": 5, "actionability": 6, "fatal": False}
+        return {a: hi if prefer == a else lo, b: hi if prefer == b else lo}
+
+    def answer(self, st, d):
+        for jid, outs, brief, kind in C.jobs(st, d):
+            if jid in self.drop:
+                continue
+            if kind == "text":
+                for o in outs:
+                    C.wr(o, "content for %s\n" % jid)
+                if jid.startswith("D-") and self.passing:
+                    cid = jid[2:]
+                    C.wr(os.path.join(C.files_dir(d, cid, 0), "flag.txt"), "ok" if self.passing(cid) else "no")
+            elif kind[0] == "revise":
+                cid = kind[1]
+                C.wr(outs[0], "revised %s\n" % cid)
+                C.wr(outs[1], "#1 ACCEPT - fixed\n")
+                if self.passing:
+                    C.wr(os.path.join(C.files_dir(d, cid, st["round"]), "flag.txt"), "ok" if self.passing(cid) else "no")
+            elif kind[0] == "screen":
+                C.wr(outs[0], json.dumps({"scores": {c: self.rng.randint(20, 95) for c in kind[1]}}))
+            elif kind[0] == "verdict":
+                a, b = kind[1], kind[2]
+                if self.judge_mode == "first":      # always prefers whoever is shown first -> judges disagree
+                    prefer = a
+                elif self.judge_mode == "lower-id":
+                    prefer = min(a, b)
+                else:
+                    prefer = self.rng.choice([a, b])
+                js = {"scores": self.scores(a, b, prefer), "reason": "x", "resolved": {prefer: ["point 1"]}, "open": {}}
+                C.wr(outs[0], json.dumps(js))
+
+
+def drive(sim, limit=200):
+    for _ in range(limit):
+        rc, out = run_cli("next")
+        assert rc == 0, out
+        if out.startswith("DONE"):
+            return out
+        d, st = C.load()
+        sim.answer(st, d)
+    raise AssertionError("did not finish")
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.old = os.getcwd()
+        self.tmp = tempfile.mkdtemp()
+        os.chdir(self.tmp)
+        os.environ["COLOSSEUM_HOME"] = os.path.join(self.tmp, "home")
+        C.wr("task.md", "Write a haiku about rain.\n")
+
+    def tearDown(self):
+        os.chdir(self.old)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+class TestUnits(Base):
+    def test_seed_order(self):
+        self.assertEqual(C.seed_order(8), [1, 8, 4, 5, 2, 7, 3, 6])
+        self.assertEqual(sorted(C.seed_order(16)), list(range(1, 17)))
+
+    def test_deal_unique_and_balanced(self):
+        cards = C.deal(64, "general", random.Random(3), {})
+        keys = {(c["angle"], c["method"], c["priority"]) for c in cards}
+        self.assertEqual(len(keys), 64)
+        counts = {}
+        for c in cards:
+            counts[c["angle"]] = counts.get(c["angle"], 0) + 1
+        self.assertLessEqual(max(counts.values()) - min(counts.values()), 1)
+
+    def test_learning_shifts_allocation(self):
+        stats = {}
+        for _ in range(30):
+            C.stats_bump(stats, "code", {"angle": "pre-mortem", "method": "careful-pass", "priority": "correctness"}, 1, 1)
+            C.stats_bump(stats, "code", {"angle": "skeptic", "method": "expand-cut", "priority": "efficiency"}, 0, 1)
+        cards = C.deal(40, "code", random.Random(1), stats)
+        n = lambda v: sum(1 for c in cards if c["angle"] == v)
+        self.assertGreater(n("pre-mortem"), n("skeptic"))
+        self.assertGreaterEqual(n("skeptic"), 1)  # exploration floor
+
+    def test_vote_fatal_rule(self):
+        js = {"scores": {"a": {"accuracy": 10, "coverage": 10, "resilience": 10, "actionability": 10, "fatal": True},
+                         "b": {"accuracy": 2, "coverage": 2, "resilience": 2, "actionability": 2, "fatal": False}}}
+        self.assertEqual(C.vote(js, "a", "b"), "b")
+
+    def test_batches_cover_each_draft_k_times(self):
+        ids = ["c%02d" % i for i in range(1, 33)]
+        bs = C.make_batches(ids, 2, 6, random.Random(0))
+        for c in ids:
+            self.assertEqual(sum(b.count(c) for b in bs), 2)
+        for b in bs:
+            self.assertEqual(len(b), len(set(b)))
+
+
+class TestRuns(Base):
+    def test_quick_run(self):
+        self.assertEqual(run_cli("init", "--quick", "--seed", "4", "--task-file", "task.md")[0], 0)
+        drive(Sim(1))
+        d, st = C.load()
+        self.assertEqual(st["phase"], "done")
+        self.assertIn(st["champion"], st["ids"])
+        self.assertEqual(len(st["history"]), 2)
+        self.assertEqual(st["calls"], 12 + 4 + 6 * 3 + sum(1 for h in st["history"] for m in h["matches"] if m["by"] == "tiebreak" or m["by"] == "fallback-screen-score"))
+        self.assertTrue(os.path.exists(C.stats_path()))
+        self.assertEqual(run_cli("champion")[0], 0)
+        self.assertEqual(run_cli("report")[0], 0)
+
+    def test_default_run_with_consistent_judges(self):
+        run_cli("init", "--seed", "9", "--task-file", "task.md")
+        drive(Sim(2, judge_mode="lower-id"))
+        d, st = C.load()
+        self.assertEqual(st["judge_agree"], st["judge_pairs"])
+        self.assertEqual(st["judge_pairs"], 7)
+        self.assertEqual(st["champion"], min(st["ranking"][:8]))
+
+    def test_disagreeing_judges_trigger_tiebreaks(self):
+        run_cli("init", "--quick", "--seed", "5", "--task-file", "task.md")
+        drive(Sim(3, judge_mode="first"))
+        d, st = C.load()
+        self.assertEqual(st["judge_agree"], 0)
+        bys = {m["by"] for h in st["history"] for m in h["matches"]}
+        self.assertEqual(bys, {"tiebreak"})
+
+    def test_missing_outputs_get_placeholders(self):
+        run_cli("init", "--quick", "--seed", "6", "--task-file", "task.md")
+        drive(Sim(4, drop={"D-c03", "S-b01", "J-r1-m1-a"}))
+        d, st = C.load()
+        self.assertEqual(st["phase"], "done")
+        self.assertEqual(C.rd(C.sol(d, "c03", 0)).strip(), "NO OUTPUT")
+
+    def test_tests_decide_matches(self):
+        proj = os.path.join(self.tmp, "proj")
+        C.wr(os.path.join(proj, "flag.txt"), "no")
+        cmd = "python3 -c \"import sys; sys.exit(0 if open('flag.txt').read().strip()=='ok' else 1)\""
+        run_cli("init", "--quick", "--seed", "7", "--task-file", "task.md", "--kind", "code", "--test-cmd", cmd, "--project", proj)
+        good = {"c02", "c05"}
+        drive(Sim(5, passing=lambda c: c in good))
+        d, st = C.load()
+        self.assertIn(st["champion"], good)
+        self.assertTrue(all(c in st["ranking"][:2] for c in good))  # passing drafts rank first in the screen
+        self.assertEqual(C.rd(os.path.join(proj, "flag.txt")), "no")  # project untouched
+
+    def test_baseline_final_check(self):
+        C.wr("old.md", "a bad haiku\n")
+        run_cli("init", "--quick", "--seed", "8", "--task-file", "task.md", "--baseline-file", "old.md")
+        drive(Sim(6))
+        d, st = C.load()
+        self.assertEqual(set(st["final"]), {"a", "b"})
+        self.assertIn("champion", st["final"]["a"])
+
+    def test_plan(self):
+        rc, out = run_cli("plan")
+        self.assertEqual(rc, 0)
+        self.assertIn("32 drafters", out)
+        self.assertEqual(run_cli("plan", "--field", "6")[0], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
