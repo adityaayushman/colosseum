@@ -30,8 +30,8 @@ class Sim:
         self.passing = passing          # function cid -> bool for code tasks
 
     def scores(self, a, b, prefer):
-        hi = {"accuracy": 9, "coverage": 9, "resilience": 8, "actionability": 8, "fatal": False}
-        lo = {"accuracy": 5, "coverage": 6, "resilience": 5, "actionability": 6, "fatal": False}
+        hi = {"accuracy": 9, "coverage": 9, "resilience": 8, "actionability": 8, "clarity": 8, "fatal": False}
+        lo = {"accuracy": 5, "coverage": 6, "resilience": 5, "actionability": 6, "clarity": 6, "fatal": False}
         return {a: hi if prefer == a else lo, b: hi if prefer == b else lo}
 
     def answer(self, st, d):
@@ -111,15 +111,59 @@ class TestUnits(Base):
         for _ in range(30):
             C.stats_bump(stats, "code", {"angle": "pre-mortem", "method": "careful-pass", "priority": "correctness"}, 1, 1)
             C.stats_bump(stats, "code", {"angle": "skeptic", "method": "expand-cut", "priority": "efficiency"}, 0, 1)
-        cards = C.deal(40, "code", random.Random(1), stats)
-        n = lambda v: sum(1 for c in cards if c["angle"] == v)
+        win = lose = 0
+        for seed in range(40):
+            cards = C.deal(40, "code", random.Random(seed), stats)
+            win += sum(1 for c in cards if c["angle"] == "pre-mortem")
+            lose += sum(1 for c in cards if c["angle"] == "skeptic")
+        self.assertGreater(win, 2 * lose)
+        self.assertGreater(lose, 0)  # losers still get explored sometimes
+        big = C.deal(200, "code", random.Random(1), stats)
+        n = lambda v: sum(1 for c in big if c["angle"] == v)
         self.assertGreater(n("pre-mortem"), n("skeptic"))
-        self.assertGreaterEqual(n("skeptic"), 1)  # exploration floor
+        self.assertGreaterEqual(n("skeptic"), 1)
+
+    def test_deck_bigger_than_2160(self):
+        self.assertGreaterEqual(len(C.ANGLES) * len(C.METHODS) * len(C.PRIORITIES), 2704)
+        self.assertEqual(len(C.METHODS), C.SPREAD)
+        self.assertEqual(len(C.PRIORITIES), C.SPREAD)
+
+    def test_no_two_cards_share_two_parts_up_to_169(self):
+        for n, seed in ((144, 1), (169, 2), (37, 3), (100, 4)):
+            cards = C.deal(n, "general", random.Random(seed), {})
+            self.assertEqual(len(cards), n)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    self.assertLessEqual(C.shared_parts(cards[i], cards[j]), 1)
+
+    def test_full_diagonals_are_balanced(self):
+        cards = C.deal(39, "general", random.Random(5), {})
+        for axis in C.AXES:
+            counts = {}
+            for c in cards:
+                counts[c[axis]] = counts.get(c[axis], 0) + 1
+            self.assertEqual(set(counts.values()), {3})
+
+    def test_large_deal_unique(self):
+        cards = C.deal(256, "general", random.Random(9), {})
+        self.assertEqual(len({(c["angle"], c["method"], c["priority"]) for c in cards}), 256)
+
+    def test_zscore_cancels_harsh_screener(self):
+        lenient = C.zscores({"a": 95, "b": 90, "c": 85})
+        harsh = C.zscores({"a": 45, "b": 40, "c": 35})
+        self.assertEqual(lenient, harsh)
+        self.assertEqual(C.zscores({"a": 50, "b": 50}), {"a": 0.0, "b": 0.0})
 
     def test_vote_fatal_rule(self):
-        js = {"scores": {"a": {"accuracy": 10, "coverage": 10, "resilience": 10, "actionability": 10, "fatal": True},
-                         "b": {"accuracy": 2, "coverage": 2, "resilience": 2, "actionability": 2, "fatal": False}}}
+        top = {"accuracy": 10, "coverage": 10, "resilience": 10, "actionability": 10, "clarity": 10}
+        low = {"accuracy": 2, "coverage": 2, "resilience": 2, "actionability": 2, "clarity": 2, "fatal": False}
+        js = {"scores": {"a": dict(top, fatal=True, fatal_evidence="line 3 divides by zero for n=0"), "b": low}}
         self.assertEqual(C.vote(js, "a", "b"), "b")
+
+    def test_fatal_without_evidence_is_ignored(self):
+        top = {"accuracy": 10, "coverage": 10, "resilience": 10, "actionability": 10, "clarity": 10, "fatal": True, "fatal_evidence": " "}
+        low = {"accuracy": 2, "coverage": 2, "resilience": 2, "actionability": 2, "clarity": 2, "fatal": False}
+        self.assertEqual(C.vote({"scores": {"a": top, "b": low}}, "a", "b"), "a")
 
     def test_batches_cover_each_draft_k_times(self):
         ids = ["c%02d" % i for i in range(1, 33)]
@@ -138,7 +182,7 @@ class TestRuns(Base):
         self.assertEqual(st["phase"], "done")
         self.assertIn(st["champion"], st["ids"])
         self.assertEqual(len(st["history"]), 2)
-        self.assertEqual(st["calls"], 12 + 4 + 6 * 3 + 3 + sum(1 for h in st["history"] for m in h["matches"] if m["by"] == "tiebreak" or m["by"] == "fallback-screen-score"))
+        self.assertEqual(st["calls"], 12 + 6 + 6 * 3 + 1 + 3 + sum(1 for h in st["history"][:-1] for m in h["matches"] if m["by"] in ("tiebreak", "single-judge", "fallback-screen-score")))
         self.assertTrue(os.path.exists(C.stats_path()))
         self.assertEqual(run_cli("champion")[0], 0)
         self.assertEqual(run_cli("report")[0], 0)
@@ -156,8 +200,9 @@ class TestRuns(Base):
         drive(Sim(3, judge_mode="first"))
         d, st = C.load()
         self.assertEqual(st["judge_agree"], 0)
-        bys = {m["by"] for h in st["history"] for m in h["matches"]}
+        bys = {m["by"] for h in st["history"][:-1] for m in h["matches"]}
         self.assertEqual(bys, {"tiebreak"})
+        self.assertEqual(st["history"][-1]["matches"][0]["by"], "panel of 3")
 
     def test_missing_outputs_get_placeholders(self):
         run_cli("init", "--quick", "--seed", "6", "--task-file", "task.md")
@@ -262,6 +307,79 @@ class TestRuns(Base):
         self.assertIn('"writing"', html)
         self.assertNotIn("__DATA__", html)
         self.assertEqual(html.count("<script>"), 1)
+
+    def test_final_gets_three_judges(self):
+        run_cli("init", "--quick", "--seed", "31", "--task-file", "task.md")
+        drive(Sim(31))
+        d, st = C.load()
+        fm = st["history"][-1]["matches"][0]
+        self.assertTrue(os.path.exists(os.path.join(d, "briefs", "J-%s-c.md" % fm["id"])))
+        self.assertEqual(len(fm["votes"]), 3)
+
+    def test_record_override_and_pairings(self):
+        run_cli("init", "--quick", "--seed", "32", "--task-file", "task.md")
+        sim = Sim(32)
+        for _ in range(4):
+            d, st = C.load()
+            sim.answer(st, d)
+            run_cli("next")
+        d, st = C.load()
+        self.assertIn(st["matches"][0]["id"], run_cli("pairings")[1])
+        m = st["matches"][0]
+        self.assertEqual(run_cli("record", m["id"], "nobody", "--reason", "x")[0], 1)
+        self.assertEqual(run_cli("record", m["id"], m["b"], "--reason", "judge output was corrupted")[0], 0)
+        d, st = C.load()
+        self.assertTrue(st["matches"][0]["by"].startswith("manual"))
+        drive(sim)
+        d, st = C.load()
+        self.assertEqual(st["history"][0]["matches"][0]["winner"], m["b"])
+        self.assertEqual(len(st["overrides"]), 1)
+
+    def test_presets_reach_arena_scale(self):
+        rc, out = run_cli("plan", "--full")
+        self.assertIn("100 drafters", out)
+        rc, out = run_cli("plan", "--max")
+        self.assertIn("256 drafters", out)
+        self.assertEqual(run_cli("plan", "--drafters", "257")[0], 1)
+
+    def test_calibrated_ranking_beats_lenient_screener(self):
+        run_cli("init", "--drafters", "12", "--field", "4", "--seed", "33", "--task-file", "task.md")
+        run_cli("next")
+        d, st = C.load()
+        Sim(33).answer(st, d)
+        run_cli("next")
+        d, st = C.load()
+        self.assertEqual(st["phase"], "screen")
+        truth = {c: i for i, c in enumerate(st["ids"])}  # lower index = better
+        for i, batch in enumerate(st["batches"]):
+            offset = 50 if i % 2 == 0 else 0  # half the screeners are lenient by 50 points
+            C.wr(os.path.join(d, "screen", "b%02d.json" % (i + 1)),
+                 json.dumps({"scores": {c: 40 - truth[c] + offset for c in batch}}))
+        run_cli("next")
+        d, st = C.load()
+        self.assertEqual(sorted(st["ranking"][:4]), ["c01", "c02", "c03", "c04"])
+
+    def test_judge_briefs_ask_for_all_criteria_and_evidence(self):
+        run_cli("init", "--quick", "--seed", "34", "--task-file", "task.md")
+        drive(Sim(34))
+        d, st = C.load()
+        brief = C.rd(os.path.join(d, "briefs", "J-r1-m1-a.md"))
+        for k, _ in C.RUBRIC:
+            self.assertIn('"%s": 0' % k, brief)
+        self.assertIn("fatal_evidence", brief)
+        self.assertEqual(sum(w for _, w in C.RUBRIC), 100)
+
+    def test_cowork_build_matches_engine(self):
+        root = os.path.join(HERE, "..")
+        built = os.path.join(root, "cowork", "SKILL.md")
+        if not os.path.exists(built):
+            self.skipTest("cowork build not present")
+        t = C.rd(built)
+        f = "`" * 3
+        b = "<!-- COLOSSEUM-ENGINE-BEGIN -->\n" + f + "python\n"
+        s = t.rindex(b) + len(b)
+        engine = t[s:t.index(f + "\n<!-- COLOSSEUM-ENGINE-END -->", s)]
+        self.assertEqual(engine, C.rd(os.path.join(root, "skills", "colosseum", "colosseum.py")))
 
     def test_plan(self):
         rc, out = run_cli("plan")

@@ -16,8 +16,8 @@ Works as a **Claude Code skill** and in **Claude Cowork**. Standard-library Pyth
 
 | | |
 | --- | --- |
-| **Screening cut** | Every draft is scored by 2 independent screeners in shuffled batches. Only the top *K* enter the bracket, so a 32-draft run costs ~86 calls instead of ~187. |
-| **Bias-checked judging** | Each match gets two judges with the answers in swapped order. If they disagree, a third judge breaks the tie. The agreement rate is reported, which gives a measurable signal of judge reliability. |
+| **Calibrated screening cut** | Every draft is scored by 3 independent screeners in shuffled batches. Each screener's scores are standardised (z-scores) before averaging, so one harsh or lenient screener cannot reorder the field. Only the top *K* enter the bracket: 100 drafters cost ~245 calls instead of ~595. |
+| **Bias-checked judging** | Each match gets two judges with the answers in swapped order; if they disagree, a third breaks the tie. The final always gets a 3-judge panel. A "fatal flaw" only counts when the judge quotes the exact failing part. The agreement rate is reported as a reliability signal. |
 | **Tests as ground truth** | For code, each answer's files are overlaid on a clean copy of your project and your test command is run. Passing drafts rank first in the screen, and when only one side of a match passes, the tests decide without a judge. Your project is never modified. |
 | **Strategy learning** | Wins and losses are recorded per strategy and per task kind in `~/.colosseum/stats.json`. Future runs deal the winning strategies more often (Beta-posterior weighting), while every option keeps a minimum share so the system keeps exploring. |
 | **Model mixing** | Each role has its own model: drafts and screens on a cheaper model, judges and the merge on the strongest one. Use `--budget` for an all-cheap preset or `--models draft=haiku,judge=opus` for your own mix. Calls are logged per model. |
@@ -46,19 +46,22 @@ draft (N) ──► [exam] ──► screen (2× per draft) ──► top K, see
 
 | preset | drafters | bracket | calls (approx.) |
 | --- | --- | --- | --- |
-| `--quick` | 12 | 4 | 37 |
-| default | 32 | 8 | 89 |
-| `--full` | 64 | 16 | 179 |
+| `--quick` | 12 | 4 | 40 |
+| default | 32 | 8 | 96 |
+| `--full` | 100 | 16 | 245 |
+| `--max` | 256 | 32 | 575 |
 
-These figures include the 3 merge calls (`--merge 0` removes them). Tiebreak judges add up to K-1 calls. `python3 colosseum.py plan [flags]` prints the exact plan.
+These figures include the 3 merge calls (`--merge 0` removes them) and the final's 3-judge panel. Tiebreak judges add up to K-1 calls. `python3 colosseum.py plan [flags]` prints the exact plan.
 
 ## Strategy cards
 
-A card has three parts: an **angle** (10, e.g. Pre-mortem, Work backwards, Trade-off map), a **method** (8, e.g. Checks first, Three sketches, Expand then cut) and a **priority** (8, e.g. Correctness above all, Edge cases, Usable today). That makes 640 unique cards, and no two drafters get the same one.
+A card has three parts: an **angle** (16, e.g. Pre-mortem, Constraint map, Put numbers on it), a **method** (13, e.g. Checks first, Red-team pass, Verify every claim) and a **priority** (13, e.g. Correctness above all, Evidence-backed, Scope discipline). That makes **2,704** cards.
+
+For up to **169** drafters, cards are dealt from an orthogonal Latin square: no two drafters share two of their three parts, and every full diagonal uses each angle, method and priority exactly once, so the field stays balanced. Above 169, every card is still unique.
 
 ## Scoring
 
-Judges score accuracy (35), coverage (25), resilience to critique (20) and actionability (20). An answer with a verified fatal flaw can never beat one without. See `RUBRIC_MD` in the engine.
+Judges score accuracy (30), coverage (25), resilience to critique (20), actionability (15) and clarity (10). An answer with a verified fatal flaw (one the judge backs with a quote) can never beat one without. See `RUBRIC_MD` in the engine.
 
 ## Install
 
@@ -74,6 +77,8 @@ colosseum.py init  [size flags] --task-file F [--kind K] [--budget | --models ro
                    [--baseline-file F] [--test-cmd C --project D] [--seed S]
 colosseum.py next        # does the next step or prints the next wave of jobs
 colosseum.py status
+colosseum.py pairings    # current matches with each side's card
+colosseum.py record <match> <winner> --reason "..."   # logged manual override
 colosseum.py champion    # winner, its path, critiques it beat, judge agreement, final check
 colosseum.py report      # writes report.md: screen ranking, every match, judge totals
 colosseum.py stats [--kind K]   # learned strategy win rates
@@ -86,7 +91,7 @@ colosseum.py dashboard [--out F] # HTML dashboard across all runs
 python3 -m unittest discover -s tests -v
 ```
 
-The suite runs complete tournaments with simulated agents. It covers judges who always disagree (every match goes to a tiebreak), missing outputs (placeholders and retries), test-decided code matches (and checks that the project is left untouched), the final check against a rejected answer, card uniqueness, and the learning shift. It also covers merges being accepted, rejected without a unanimous verdict, and rejected for breaking tests, plus per-role model routing and the dashboard.
+The suite runs complete tournaments with simulated agents. It covers judges who always disagree (every match goes to a tiebreak), missing outputs (placeholders and retries), test-decided code matches (and checks that the project is left untouched), the final check against a rejected answer, card uniqueness, and the learning shift. It also covers merges being accepted, rejected without a unanimous verdict, and rejected for breaking tests, plus per-role model routing and the dashboard. The 31 tests also check the Latin-square guarantee at 144 and 169 drafters, that z-score calibration recovers the true ranking when half the screeners are lenient by 50 points (raw averaging gets it wrong), that unquoted fatal flags are ignored, the final's 3-judge panel, manual overrides, and that the Cowork build carries the exact engine.
 
 ## Limits
 

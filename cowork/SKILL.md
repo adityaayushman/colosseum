@@ -1,7 +1,7 @@
 ---
 name: colosseum
 description: Run a screened tournament of sub-agents on one task - many drafts, a cheap screening cut, then critique, revise and double-blind judging until one answer wins. Use on /colosseum, "colosseum this", "make them compete", or when the user rejects an answer.
-argument-hint: "[--quick | --full | --drafters N --field K] [--kind code|writing|plan|analysis] [--budget | --models role=model,...] [--merge N] [--test-cmd CMD --project DIR] [--seed S] <task>"
+argument-hint: "[--quick | --full | --max | --drafters N --field K] [--kind code|writing|plan|analysis] [--budget | --models role=model,...] [--merge N] [--test-cmd CMD --project DIR] [--seed S] <task>"
 ---
 
 # Colosseum
@@ -12,10 +12,10 @@ User input after the command: `$ARGUMENTS` (blank or a placeholder means: take t
 
 ## The engine
 
-The engine is embedded at the end of this file (section "Embedded engine", SHA-256 `6919ab19f2c56843b75bebded4f278203ef01314ae68148ee14e44ecceaa0729`). Before the first command, make sure it is unpacked:
+The engine is embedded at the end of this file (section "Embedded engine", SHA-256 `152aca2e7709254d1607e17d6f79fd11005a1397b90e221deed43a5c53a36c0e`). Before the first command, make sure it is unpacked:
 
 ```bash
-E="$HOME/.cache/colosseum/colosseum.py"; SHA=6919ab19f2c56843b75bebded4f278203ef01314ae68148ee14e44ecceaa0729
+E="$HOME/.cache/colosseum/colosseum.py"; SHA=152aca2e7709254d1607e17d6f79fd11005a1397b90e221deed43a5c53a36c0e
 check() { [ -f "$E" ] && [ "$(sha256sum "$E" | cut -d' ' -f1)" = "$SHA" ]; }
 if ! check; then
   mkdir -p "$(dirname "$E")"
@@ -44,10 +44,12 @@ The engine keeps all state in `.colosseum/<run>/state.json` under the current di
 
 | flag | effect |
 | --- | --- |
-| default | 32 drafters, top 8 enter the bracket (~89 calls) |
-| `--quick` | 12 drafters, top 4 (~37 calls) |
-| `--full` | 64 drafters, top 16 (~179 calls) |
-| `--drafters N --field K` | custom; K must be a power of two |
+| default | 32 drafters, top 8 enter the bracket (~96 calls) |
+| `--quick` | 12 drafters, top 4 (~40 calls) |
+| `--full` | 100 drafters, top 16 (~245 calls) |
+| `--max` | 256 drafters, top 32 (~575 calls) |
+| `--drafters N --field K` | custom, up to 256 drafters; K must be a power of two |
+| `--screeners S` | screeners per draft (default 3); each screener's scores are standardised before averaging |
 | `--kind` | `code`, `writing`, `plan`, `analysis` or `general`. Pick it yourself from the task. It drives strategy learning. |
 | `--test-cmd CMD --project DIR` | code tasks: run CMD in a clean copy of DIR with each answer's files overlaid. Tests decide matches when only one side passes. |
 | `--models role=model,...` | model per role. Roles: draft, screen, critique, revise, judge, merge (or `all`). Models: haiku, sonnet, opus, inherit. Default: sonnet everywhere, opus for judge and merge. |
@@ -87,9 +89,9 @@ Repeat `COL next` until it prints `DONE`. Each time it either:
 - runs test exams itself and may ask you to run `next` again; or
 - prints `PROGRESS: ...` - pass that one line to the user.
 
-Missing outputs are re-issued automatically; after the retry limit the engine writes a placeholder and moves on. Never write an answer, critique or verdict file yourself.
+Missing outputs are re-issued automatically; after the retry limit the engine writes a placeholder and moves on. Never write an answer, critique or verdict file yourself. `COL pairings` shows the current matches. `COL record <match> <winner> --reason "..."` overrides one match, and only when the user asks.
 
-Phases: draft -> (exam) -> screen -> per round: critique -> revise -> (exam) -> judge (two judges, order swapped) -> tiebreak only if they disagree -> ... -> merge of the top finalists -> (exam) -> merge check (two judges, order swapped) -> final check vs the rejected answer (if any) -> DONE.
+Phases: draft -> (exam) -> screen -> per round: critique -> revise -> (exam) -> judge (two judges, order swapped; a 3-judge panel in the final) -> tiebreak only if they disagree -> ... -> merge of the top finalists -> (exam) -> merge check (two judges, order swapped) -> final check vs the rejected answer (if any) -> DONE.
 
 Do not read answers, critiques or verdicts during the run. Do not paste pairings or scores mid-run. If context is compacted, run `COL status` then `COL next`.
 
@@ -133,7 +135,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 ROOT = ".colosseum"
 MAX_TRIES = {"draft": 2, "screen": 2, "critique": 2, "revise": 2, "judge": 3, "tiebreak": 3, "final": 2, "merge": 2, "mergecheck": 3}
 MODEL_NAMES = ("haiku", "sonnet", "opus", "inherit")
@@ -158,6 +160,12 @@ ANGLES = [
     ("skeptic", "Skeptic", "Question every default and habit for this kind of task. Keep only what survives the question."),
     ("user-journey", "User journey", "Walk through the exact moments the person will use this answer and serve each one."),
     ("tradeoff-map", "Trade-off map", "Lay out the real options with their costs, choose deliberately, and say why."),
+    ("constraint-map", "Constraint map", "List every hard constraint in the task first, then search only inside the space they leave."),
+    ("prior-art", "Prior art", "Recall how this kind of problem is usually solved well, note where this case differs, and adapt only what fits."),
+    ("stakeholder-lens", "Stakeholder lens", "Name everyone affected by the answer and check it from each of their positions."),
+    ("quantify", "Put numbers on it", "Estimate the sizes, costs and limits involved, and let the numbers drive the choices."),
+    ("boundary-test", "Boundary test", "Probe the extremes - smallest, largest, empty and malformed cases - and design from what they reveal."),
+    ("teach-it", "Teach it", "Explain the solution to a smart newcomer step by step; wherever the explanation stumbles, the answer is weak."),
 ]
 METHODS = [
     ("careful-pass", "One careful pass", "Write once, slowly, verifying each part before moving to the next."),
@@ -168,6 +176,11 @@ METHODS = [
     ("gather-synthesise", "Gather, then synthesise", "Collect every relevant fact from the task and the files it points to, then synthesise."),
     ("expand-cut", "Expand, then cut", "Write generously, then cut everything that does not earn its place."),
     ("reviewer-questions", "Reviewer questions", "List the questions a demanding reviewer would ask, then make sure the answer settles each one."),
+    ("outline-fill", "Outline, then fill", "Fix the section skeleton first, then write each section to its purpose."),
+    ("prototype-refine", "Prototype, then refine", "Build the roughest version that works end to end, then improve it in passes."),
+    ("red-team-pass", "Red-team pass", "Finish a draft, attack it as a hostile reviewer, then rewrite every weak spot."),
+    ("two-candidates", "Two candidates", "Write two complete candidate answers and keep whichever survives a direct comparison."),
+    ("verify-claims", "Verify every claim", "After drafting, check each factual or technical claim and fix or cut anything unverified."),
 ]
 PRIORITIES = [
     ("correctness", "Correctness above all", "When in doubt, choose what is provably right over what is fast or elegant."),
@@ -178,23 +191,31 @@ PRIORITIES = [
     ("reader-clarity", "Reader clarity", "Optimise for how quickly the reader understands and trusts the answer."),
     ("safe-defaults", "Safe defaults", "Choose defaults that fail safely, and make risky choices explicit."),
     ("efficiency", "Efficiency", "Minimise cost, time and moving parts without dropping any requirement."),
+    ("robustness", "Robustness", "Prefer what keeps working when inputs, scale or circumstances change."),
+    ("maintainability", "Maintainability", "Prefer what someone else can understand, change and extend later."),
+    ("evidence", "Evidence-backed", "Back each important statement with a reason, source, test or calculation."),
+    ("scope-discipline", "Scope discipline", "Do exactly what was asked, completely, and nothing that was not."),
+    ("risk-aware", "Risk-aware", "Surface the main risks and trade-offs openly instead of hiding them."),
 ]
 AXES = {"angle": ANGLES, "method": METHODS, "priority": PRIORITIES}
 
 # ---------------------------------------------------------------- rubric
-RUBRIC = [("accuracy", 35), ("coverage", 25), ("resilience", 20), ("actionability", 20)]
+RUBRIC = [("accuracy", 30), ("coverage", 25), ("resilience", 20), ("actionability", 15), ("clarity", 10)]
+SCORE_OBJ = "{" + ", ".join('"%s": 0' % k for k, _ in RUBRIC) + ', "fatal": false, "fatal_evidence": ""}'
 RUBRIC_MD = """# Colosseum rubric
 
 Score each criterion 0-10. Total = sum(score / 10 * weight), out of 100.
 
 | criterion | weight | 0 | 5 | 8 | 10 |
 | --- | --- | --- | --- | --- | --- |
-| accuracy | 35 | wrong or broken | mostly right, one real error | right, minor slips | right, every claim checkable |
+| accuracy | 30 | wrong or broken | mostly right, one real error | right, minor slips | right, every claim checkable |
 | coverage | 25 | ignores the task | meets about half of the stated requirements | meets all but a minor one | meets every stated requirement |
 | resilience | 20 | collapses under the critiques | survives some, real holes remain | handles nearly all | every critique fixed or soundly refuted |
-| actionability | 20 | reader cannot use it | usable after guesswork | usable with small gaps | usable as is, concrete and clear |
+| actionability | 15 | reader cannot use it | usable after guesswork | usable with small gaps | usable as is, concrete steps |
+| clarity | 10 | hard to follow | followable with effort | clear, small rough spots | clear, well ordered, no padding |
 
-fatal = true only for a flaw you verified that makes the answer wrong or unusable for the task.
+fatal = true only for a flaw you verified that makes the answer wrong or unusable for the task, and only with
+fatal_evidence: the exact quote or input that fails and why. A fatal flag without evidence is ignored.
 A fatal answer never beats a non-fatal one. Length is not quality.
 """
 
@@ -251,7 +272,7 @@ Look through your own card:
 Rival answer: <<opp_sol>>
 Your answer, for reference only: <<own_sol>>
 <<exam_note>>
-Report only real, checkable problems, strongest first, at most 6:
+Report only real, checkable problems, strongest first, at most 8:
 - ERROR: something false, buggy or logically wrong.
 - GAP: a stated requirement missed or half met (quote it).
 - BREAK: a concrete input or situation where it fails (give it exactly).
@@ -311,11 +332,11 @@ Method:
 1. Read both revised answers fully before scoring either.
 2. For each critique point, check the revised answer yourself: FIXED, REFUTED (only if the refutation is right) or OPEN. A response saying "fixed" proves nothing.
 3. Look for problems both critics missed.
-4. Score every criterion 0-10 with the rubric anchors. fatal = true only for a verified flaw that makes the answer wrong or unusable.
+4. Score every criterion 0-10 with the rubric anchors. fatal = true only for a verified flaw that makes the answer wrong or unusable, and then fatal_evidence must quote the failing part and say why. No evidence, no fatal.
 5. Judge the work, not its length or confidence. Touch no file except the output.<<scratch_note>>
 
 Write only this JSON to <<out>>:
-{"scores": {"<<first>>": {"accuracy": 0, "coverage": 0, "resilience": 0, "actionability": 0, "fatal": false}, "<<second>>": {"accuracy": 0, "coverage": 0, "resilience": 0, "actionability": 0, "fatal": false}}, "reason": "the decisive difference, one sentence", "resolved": {"<<first>>": ["critique points it beat"], "<<second>>": ["..."]}, "open": {"<<first>>": ["points still standing"], "<<second>>": ["..."]}}
+{"scores": {"<<first>>": <<score_obj>>, "<<second>>": <<score_obj>>}, "reason": "the decisive difference, one sentence", "resolved": {"<<first>>": ["critique points it beat"], "<<second>>": ["..."]}, "open": {"<<first>>": ["points still standing"], "<<second>>": ["..."]}}
 
 Then reply with exactly one line: JUDGED <<mid>>
 """
@@ -357,10 +378,10 @@ Rubric: <<rubric>>
 Answer <<first>>: <<first_sol>>
 Answer <<second>>: <<second_sol>>
 <<exam_note>>
-Read both fully. Attack each the way a hostile expert would, then score each criterion 0-10. fatal = true only for a verified flaw. Longer is not better: extra material that adds nothing is a cost. Touch no file except the output.
+Read both fully. Attack each the way a hostile expert would, then score each criterion 0-10. fatal = true only for a verified flaw, with fatal_evidence quoting it. Longer is not better: extra material that adds nothing is a cost. Touch no file except the output.
 
 Write only this JSON to <<out>>:
-{"scores": {"<<first>>": {"accuracy": 0, "coverage": 0, "resilience": 0, "actionability": 0, "fatal": false}, "<<second>>": {"accuracy": 0, "coverage": 0, "resilience": 0, "actionability": 0, "fatal": false}}, "reason": "the decisive difference, one sentence"}
+{"scores": {"<<first>>": <<score_obj>>, "<<second>>": <<score_obj>>}, "reason": "the decisive difference, one sentence"}
 
 Then reply with exactly one line: JUDGED merge
 """
@@ -376,10 +397,10 @@ Rubric: <<rubric>>
 Answer X: <<x>>
 Answer Y: <<y>>
 
-Read both fully. Attack each yourself the way a hostile expert would, then score each criterion 0-10. fatal = true only for a verified flaw. Length is not quality. Touch no file except the output.
+Read both fully. Attack each yourself the way a hostile expert would, then score each criterion 0-10. fatal = true only for a verified flaw, with fatal_evidence quoting it. Length is not quality. Touch no file except the output.
 
 Write only this JSON to <<out>>:
-{"scores": {"X": {"accuracy": 0, "coverage": 0, "resilience": 0, "actionability": 0, "fatal": false}, "Y": {"accuracy": 0, "coverage": 0, "resilience": 0, "actionability": 0, "fatal": false}}, "reason": "the decisive difference, one sentence"}
+{"scores": {"X": <<score_obj>>, "Y": <<score_obj>>}, "reason": "the decisive difference, one sentence"}
 
 Then reply with exactly one line: CHECKED
 """
@@ -414,6 +435,7 @@ def jload(p):
 
 
 def fill(t, **kv):
+    kv.setdefault("score_obj", SCORE_OBJ)
     for k, v in kv.items():
         t = t.replace("<<%s>>" % k, str(v))
     return t
@@ -490,9 +512,62 @@ def allocate(n, values, weights):
     return alloc
 
 
+SPREAD = 13  # prime; methods and priorities have exactly this many entries
+SPREAD_MAX = SPREAD * SPREAD
+
+
+def wkey(rng, w):
+    """Weighted-sampling key (Efraimidis-Spirakis): larger weight -> larger key on average."""
+    return rng.random() ** (1.0 / max(w, 1e-6))
+
+
 def deal(n, kind, rng, stats):
+    """Deal n unique cards. Up to 169 drafters no two cards share two of their three parts."""
     if n > len(ANGLES) * len(METHODS) * len(PRIORITIES):
         raise Err("too many drafters for the card deck")
+    if n <= SPREAD_MAX:
+        return deal_spread(n, kind, rng, stats)
+    return deal_unique(n, kind, rng, stats)
+
+
+def deal_spread(n, kind, rng, stats):
+    """Orthogonal Latin-square deal: card (i, j) = (angle i, method j, priority (i*k + j) mod 13).
+    Any two cards share at most one part. Cards are taken one diagonal at a time; each diagonal holds
+    every chosen angle, method and priority exactly once, so the axes stay balanced. Past results pick
+    which 13 angles play and which cards fill a partial diagonal."""
+    angles = sorted((a[0] for a in ANGLES), key=lambda a: -wkey(rng, weight(stats, kind, "angle", a)))[:SPREAD]
+    rng.shuffle(angles)
+    methods = [m[0] for m in METHODS]
+    prios = [p[0] for p in PRIORITIES]
+    rng.shuffle(methods)
+    rng.shuffle(prios)
+    k = rng.randrange(1, SPREAD - 1)  # k + 1 != 0 mod 13 keeps diagonals balanced on priorities
+
+    def card(i, j):
+        return {"angle": angles[i], "method": methods[j], "priority": prios[(i * k + j) % SPREAD]}
+
+    diagonals = list(range(SPREAD))
+    rng.shuffle(diagonals)
+    cards = []
+    for t in diagonals:
+        diag = [card(i, (i + t) % SPREAD) for i in range(SPREAD)]
+        need = n - len(cards)
+        if need <= 0:
+            break
+        if need < SPREAD:
+            score = lambda c: wkey(rng, weight(stats, kind, "angle", c["angle"]) * weight(stats, kind, "method", c["method"])
+                                   * weight(stats, kind, "priority", c["priority"]))
+            diag = sorted(diag, key=lambda c: -score(c))[:need]
+        cards += diag
+    rng.shuffle(cards)
+    return cards
+
+
+def shared_parts(a, b):
+    return sum(1 for ax in AXES if a[ax] == b[ax])
+
+
+def deal_unique(n, kind, rng, stats):
     pools = {}
     for axis, vals in AXES.items():
         ids = [v[0] for v in vals]
@@ -562,10 +637,14 @@ def valid_scores(js, ids):
     return True
 
 
+def is_fatal(s):
+    return bool(s.get("fatal")) and bool(str(s.get("fatal_evidence") or "").strip())
+
+
 def vote(js, a, b):
     """Winner implied by a verdict: fatal rule, then weighted total. None on exact tie."""
     sa, sb = js["scores"][a], js["scores"][b]
-    fa, fb = bool(sa.get("fatal")), bool(sb.get("fatal"))
+    fa, fb = is_fatal(sa), is_fatal(sb)
     if fa != fb:
         return b if fa else a
     ta, tb = total(sa), total(sb)
@@ -655,7 +734,11 @@ def jobs(st, d):
         for m in st["matches"]:
             if m["winner"]:
                 continue
-            seats = [("a", m["a"], m["b"]), ("b", m["b"], m["a"])] if ph == "judge" else [("c", m["a"], m["b"]) if r % 2 else ("c", m["b"], m["a"])]
+            third = ("c", m["a"], m["b"]) if r % 2 else ("c", m["b"], m["a"])
+            if ph == "judge":
+                seats = [("a", m["a"], m["b"]), ("b", m["b"], m["a"])] + ([third] if is_final(st) else [])
+            else:
+                seats = [third]
             mdir = os.path.join(d, "r%d" % r, m["id"])
             for jid, first, second in seats:
                 o = os.path.join(mdir, "judge-%s.json" % jid)
@@ -799,9 +882,10 @@ def after_screen(st, d, stats):
             if isinstance(v, (int, float)):
                 sums[c].append(max(0.0, min(100.0, float(v))))
     st["screen"] = {c: (round(sum(v) / len(v), 1) if v else 0.0) for c, v in sums.items()}
+    st["screen_z"] = calibrated(st, d)
     tie = {c: rng.random() for c in st["ids"]}
     passed = lambda c: 1 if (st["exam"].get(exam_key(c, 0)) or {}).get("passed") else 0
-    ranked = sorted(st["ids"], key=lambda c: (-passed(c), -st["screen"][c], tie[c]))
+    ranked = sorted(st["ids"], key=lambda c: (-passed(c), -st["screen_z"][c], -st["screen"][c], tie[c]))
     k = st["params"]["field"]
     st["ranking"] = ranked
     field = ranked[:k]
@@ -812,6 +896,26 @@ def after_screen(st, d, stats):
         stats_bump(stats, st["kind"], st["cards"][c], 0.5, 0.5)
     st["alive"] = [field[s - 1] for s in seed_order(k)]
     start_round(st, 1)
+
+
+def zscores(scores):
+    """Standardise one screener's scores so a harsh or lenient screener cannot skew the ranking."""
+    vals = list(scores.values())
+    if len(vals) < 2:
+        return {c: 0.0 for c in scores}
+    mean = sum(vals) / len(vals)
+    sd = math.sqrt(sum((v - mean) ** 2 for v in vals) / len(vals))
+    return {c: (0.0 if sd == 0 else (v - mean) / sd) for c, v in scores.items()}
+
+
+def calibrated(st, d):
+    zs = {c: [] for c in st["ids"]}
+    for i, batch in enumerate(st["batches"]):
+        js = jload(os.path.join(d, "screen", "b%02d.json" % (i + 1))) or {}
+        sc = {c: float(v) for c, v in (js.get("scores") or {}).items() if c in batch and isinstance(v, (int, float))}
+        for c, z in zscores(sc).items():
+            zs[c].append(z)
+    return {c: (round(sum(v) / len(v), 3) if v else -9.0) for c, v in zs.items()}
 
 
 def start_round(st, r):
@@ -831,8 +935,13 @@ def decide_by_tests(st):
             m["winner"], m["by"] = (m["a"] if pa else m["b"]), "tests"
 
 
+def is_final(st):
+    return len(st["alive"]) == 2
+
+
 def fallback(st, m):
-    return m["a"] if st["screen"].get(m["a"], 0) >= st["screen"].get(m["b"], 0) else m["b"]
+    sz = st.get("screen_z") or st["screen"]
+    return m["a"] if sz.get(m["a"], 0) >= sz.get(m["b"], 0) else m["b"]
 
 
 def collect_votes(st, d, seats):
@@ -848,7 +957,18 @@ def collect_votes(st, d, seats):
                 m["votes"].append({"judge": jid, "winner": vote(js, m["a"], m["b"]),
                                    "totals": {m["a"]: total(js["scores"][m["a"]]), m["b"]: total(js["scores"][m["b"]])}})
         vs = [v["winner"] for v in m["votes"] if v["winner"]]
-        if seats == ["a", "b"]:
+        if seats == ["a", "b", "c"]:
+            ab = [v for v in m["votes"] if v["judge"] in ("a", "b")]
+            if len(ab) == 2:
+                st["judge_pairs"] += 1
+                if ab[0]["winner"] and ab[0]["winner"] == ab[1]["winner"]:
+                    st["judge_agree"] += 1
+            for c in (m["a"], m["b"]):
+                if vs.count(c) >= 2:
+                    m["winner"], m["by"] = c, "panel of 3"
+            if not m["winner"]:
+                m["winner"], m["by"] = (vs[0], "single-judge") if len(vs) == 1 else (fallback(st, m), "fallback-screen-score")
+        elif seats == ["a", "b"]:
             ab = [v for v in m["votes"] if v["judge"] in ("a", "b")]
             if len(ab) == 2:
                 st["judge_pairs"] += 1
@@ -929,7 +1049,7 @@ def advance(st, d, stats):
         decide_by_tests(st)
         st["phase"] = "judge"
     elif ph == "judge":
-        if collect_votes(st, d, ["a", "b"]):
+        if collect_votes(st, d, ["a", "b", "c"] if is_final(st) else ["a", "b"]):
             st["phase"] = "tiebreak"
         else:
             finish_round(st, stats)
@@ -964,7 +1084,7 @@ def advance(st, d, stats):
             if js and not js.get("placeholder") and valid_scores(js, ["X", "Y"]):
                 cy = "baseline" if cx == "champion" else "champion"
                 res[jid] = {cx: total(js["scores"]["X"]), cy: total(js["scores"]["Y"]),
-                            cx + "_fatal": bool(js["scores"]["X"].get("fatal")), cy + "_fatal": bool(js["scores"]["Y"].get("fatal")),
+                            cx + "_fatal": is_fatal(js["scores"]["X"]), cy + "_fatal": is_fatal(js["scores"]["Y"]),
                             "reason": js.get("reason", "")}
         st["final"] = res
         st["phase"] = "done"
@@ -977,14 +1097,16 @@ def cmd_plan(a):
     rounds = int(math.log2(k))
     per_match = 6
     merge_calls = 3 if a.merge >= 2 else 0
-    calls = n + batches + per_match * (k - 1) + merge_calls
+    calls = n + batches + per_match * (k - 1) + 1 + merge_calls
     naive = n + 5 * (n - 1)
     models = parse_models(a.models, a.budget)
     print("Colosseum plan: %d drafters -> screen to %d -> %d bracket rounds" % (n, k, rounds))
     print("  draft       %4d calls" % n)
     print("  screen      %4d calls (%d screeners per draft, %d per batch)" % (batches, a.screeners, a.batch))
-    print("  bracket     %4d calls (%d matches x 2 critiques, 2 revisions, 2 judges)" % (per_match * (k - 1), k - 1))
-    print("  tiebreaks   up to %d more (only when the two judges disagree)" % (k - 1))
+    print("  bracket     %4d calls (%d matches x 2 critiques, 2 revisions, 2 judges; the final gets a 3-judge panel)" % (per_match * (k - 1) + 1, k - 1))
+    print("  tiebreaks   up to %d more (only when the two judges disagree)" % (k - 2))
+    print("  cards       %d drafters from a deck of %d%s" % (n, len(ANGLES) * len(METHODS) * len(PRIORITIES),
+          "; no two share two of their three parts" if n <= SPREAD_MAX else "; all unique"))
     if merge_calls:
         print("  merge          3 calls (synthesise the top %d, then 2 judges check it beats the winner)" % min(a.merge, k))
     print("  models      " + ", ".join("%s=%s" % (r, models[r]) for r in ROLES))
@@ -1029,9 +1151,11 @@ def sizes(a):
     if a.quick:
         n, k = 12, 4
     if a.full:
-        n, k = 64, 16
-    if n < 2 or n > 128:
-        raise Err("--drafters must be 2..128")
+        n, k = 100, 16
+    if a.max:
+        n, k = 256, 32
+    if n < 2 or n > 256:
+        raise Err("--drafters must be 2..256")
     if k < 2 or k & (k - 1) or k > n:
         raise Err("--field must be a power of two between 2 and --drafters")
     return n, k
@@ -1129,7 +1253,7 @@ def cmd_next(a):
         save(d, st)
         w = st["params"]["wave"]
         label = {"draft": "drafting", "screen": "screening", "critique": "critiques", "revise": "revisions",
-                 "judge": "judging (2 judges per match, order swapped)", "tiebreak": "tiebreak judges",
+                 "judge": "judging (2 judges per match, order swapped; 3 in the final)", "tiebreak": "tiebreak judges",
                  "merge": "merging the finalists into one answer", "mergecheck": "checking the merge against the winner (2 judges, order swapped)",
                  "final": "final check vs rejected answer"}[ph]
         rnd = (" round %d" % st["round"]) if st["round"] and ph in ("critique", "revise", "judge", "tiebreak") else ""
@@ -1220,10 +1344,11 @@ def cmd_report(a):
                                                    ", ".join("%s %d" % kv for kv in sorted(st.get("calls_by_model", {}).items())) or "-"),
              "- merge: %s" % ((("accepted" if st["merge"].get("accepted") else "rejected") + " (" + st["merge"].get("by", "") + "), sources " + ", ".join(st["merge"].get("sources", []))) if st.get("merge") else "-"),
              "- champion: %s (%s)" % (st["champion"], card_short(st["cards"][st["champion"]]) if st["champion"] else "-"), "",
-             "## Screen ranking", "", "| rank | id | score | tests | card | went out |", "| --- | --- | --- | --- | --- | --- |"]
+             "## Screen ranking", "", "Ranked by calibrated score (each screener's scores standardised), then raw average.", "",
+             "| rank | id | calibrated | raw | tests | card | went out |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for i, c in enumerate(st["ranking"] or st["ids"]):
         e = st["exam"].get(exam_key(c, 0))
-        lines.append("| %d | %s | %.1f | %s | %s | %s |" % (i + 1, c, st["screen"].get(c, 0), ("pass" if e["passed"] else "fail") if e else "-",
+        lines.append("| %d | %s | %+.2f | %.1f | %s | %s | %s |" % (i + 1, c, (st.get("screen_z") or {}).get(c, 0), st["screen"].get(c, 0), ("pass" if e["passed"] else "fail") if e else "-",
                                                      card_short(st["cards"][c]), st["out"].get(c, "champion" if c == st["champion"] else "-")))
     lines += ["", "## Matches", "", "| match | a | b | winner | decided by | judge totals |", "| --- | --- | --- | --- | --- | --- |"]
     for h in st["history"]:
@@ -1233,6 +1358,33 @@ def cmd_report(a):
     p = os.path.join(d, "report.md")
     wr(p, "\n".join(lines) + "\n")
     print(p)
+
+
+def cmd_pairings(a):
+    d, st = load()
+    if not st["matches"]:
+        print("no matches yet (phase %s)" % st["phase"])
+        return
+    print("round %d, phase %s" % (st["round"], st["phase"]))
+    for m in st["matches"]:
+        print("  %s  %s (%s) vs %s (%s)%s" % (m["id"], m["a"], card_short(st["cards"][m["a"]]), m["b"], card_short(st["cards"][m["b"]]),
+              ("  -> %s by %s" % (m["winner"], m["by"])) if m["winner"] else ""))
+
+
+def cmd_record(a):
+    """Manual override for one match of the current round, e.g. after a broken judge. Logged with a reason."""
+    d, st = load()
+    m = next((m for m in st["matches"] if m["id"] == a.match), None)
+    if not m:
+        raise Err("no match %s in the current round" % a.match)
+    if a.winner not in (m["a"], m["b"]):
+        raise Err("winner must be %s or %s" % (m["a"], m["b"]))
+    if not a.reason.strip():
+        raise Err("--reason is required")
+    m["winner"], m["by"] = a.winner, "manual: " + a.reason.strip()
+    st.setdefault("overrides", []).append({"match": a.match, "winner": a.winner, "reason": a.reason.strip(), "at": time.strftime("%Y-%m-%d %H:%M:%S")})
+    save(d, st)
+    print("recorded %s -> %s. Run next to continue." % (a.match, a.winner))
 
 
 def cmd_stats(a):
@@ -1338,8 +1490,9 @@ def main(argv=None):
         sp.add_argument("--drafters", type=int, default=32)
         sp.add_argument("--field", type=int, default=8)
         sp.add_argument("--quick", action="store_true", help="12 drafters, field 4")
-        sp.add_argument("--full", action="store_true", help="64 drafters, field 16")
-        sp.add_argument("--screeners", type=int, default=2, help="screeners per draft")
+        sp.add_argument("--full", action="store_true", help="100 drafters, field 16")
+        sp.add_argument("--max", action="store_true", help="256 drafters, field 32")
+        sp.add_argument("--screeners", type=int, default=3, help="screeners per draft")
         sp.add_argument("--batch", type=int, default=6, help="drafts per screener")
         sp.add_argument("--wave", type=int, default=10)
         sp.add_argument("--models", default="", help="per-role models, e.g. draft=haiku,judge=opus (roles: %s; models: %s)" % (",".join(ROLES), ",".join(MODEL_NAMES)))
@@ -1359,13 +1512,19 @@ def main(argv=None):
     sp.add_argument("--test-timeout", type=int, default=300)
     for name in ("next", "status", "champion", "report"):
         sub.add_parser(name)
+    sub.add_parser("pairings")
+    sp = sub.add_parser("record")
+    sp.add_argument("match")
+    sp.add_argument("winner")
+    sp.add_argument("--reason", required=True)
     sp = sub.add_parser("dashboard")
     sp.add_argument("--out", default="colosseum-dashboard.html")
     sp = sub.add_parser("stats")
     sp.add_argument("--kind")
     a = p.parse_args(argv)
     fn = {"plan": cmd_plan, "init": cmd_init, "next": cmd_next, "status": cmd_status,
-          "champion": cmd_champion, "report": cmd_report, "stats": cmd_stats, "dashboard": cmd_dashboard}.get(a.cmd)
+          "champion": cmd_champion, "report": cmd_report, "stats": cmd_stats, "dashboard": cmd_dashboard,
+          "pairings": cmd_pairings, "record": cmd_record}.get(a.cmd)
     if not fn:
         p.print_help()
         return 2
