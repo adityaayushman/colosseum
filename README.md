@@ -20,6 +20,9 @@ Works as a **Claude Code skill** and in **Claude Cowork**. Standard-library Pyth
 | **Bias-checked judging** | Each match gets two judges with the answers in swapped order. If they disagree, a third judge breaks the tie. The agreement rate is reported, which gives a measurable signal of judge reliability. |
 | **Tests as ground truth** | For code, each answer's files are overlaid on a clean copy of your project and your test command is run. Passing drafts rank first in the screen, and when only one side of a match passes, the tests decide without a judge. Your project is never modified. |
 | **Strategy learning** | Wins and losses are recorded per strategy and per task kind in `~/.colosseum/stats.json`. Future runs deal the winning strategies more often (Beta-posterior weighting), while every option keeps a minimum share so the system keeps exploring. |
+| **Model mixing** | Each role has its own model: drafts and screens on a cheaper model, judges and the merge on the strongest one. Use `--budget` for an all-cheap preset or `--models draft=haiku,judge=opus` for your own mix. Calls are logged per model. |
+| **Merge of the finalists** | After the final, one synthesiser combines the strongest parts of the top 2-4 answers, using the winner as the base and fixing the weaknesses the judges left open. The merge is delivered **only** if it passes the tests (for code) and **both** judges, reading in swapped order, score it above the winner. Otherwise you get the winner. |
+| **Dashboard** | `colosseum.py dashboard` writes a self-contained HTML page of strategy win rates per task kind, calls saved, judge agreement and merge acceptance across all your runs. |
 | **Seeded bracket** | Screen rank 1 meets rank 8, 2 meets 7 and so on, so the two strongest drafts can only meet in the final. |
 
 ## Pipeline
@@ -33,18 +36,21 @@ draft (N) ──► [exam] ──► screen (2× per draft) ──► top K, see
         ▲                                   │ disagree? ──► judge C
         └──────────── winners ◄─────────────┘
                          │
-                 champion ──► [final check vs rejected answer, both orders] ──► you
+     champion + top finalists ──► merge ──► [exam] ──► 2 judges: merge vs champion
+                         │            (merge delivered only if both prefer it)
+                         ▼
+     [final check vs rejected answer, both orders] ──► you
 ```
 
 ## Sizes
 
 | preset | drafters | bracket | calls (approx.) |
 | --- | --- | --- | --- |
-| `--quick` | 12 | 4 | 34 |
-| default | 32 | 8 | 86 |
-| `--full` | 64 | 16 | 176 |
+| `--quick` | 12 | 4 | 37 |
+| default | 32 | 8 | 89 |
+| `--full` | 64 | 16 | 179 |
 
-Tiebreak judges add up to K-1 calls. `python3 colosseum.py plan [flags]` prints the exact plan.
+These figures include the 3 merge calls (`--merge 0` removes them). Tiebreak judges add up to K-1 calls. `python3 colosseum.py plan [flags]` prints the exact plan.
 
 ## Strategy cards
 
@@ -64,12 +70,14 @@ Judges score accuracy (35), coverage (25), resilience to critique (20) and actio
 
 ```
 colosseum.py plan  [size flags]
-colosseum.py init  [size flags] --task-file F [--kind K] [--baseline-file F] [--test-cmd C --project D] [--seed S]
+colosseum.py init  [size flags] --task-file F [--kind K] [--budget | --models role=model,...] [--merge N]
+                   [--baseline-file F] [--test-cmd C --project D] [--seed S]
 colosseum.py next        # does the next step or prints the next wave of jobs
 colosseum.py status
 colosseum.py champion    # winner, its path, critiques it beat, judge agreement, final check
 colosseum.py report      # writes report.md: screen ranking, every match, judge totals
 colosseum.py stats [--kind K]   # learned strategy win rates
+colosseum.py dashboard [--out F] # HTML dashboard across all runs
 ```
 
 ## Tests
@@ -78,7 +86,7 @@ colosseum.py stats [--kind K]   # learned strategy win rates
 python3 -m unittest discover -s tests -v
 ```
 
-The suite runs complete tournaments with simulated agents. It covers judges who always disagree (every match goes to a tiebreak), missing outputs (placeholders and retries), test-decided code matches (and checks that the project is left untouched), the final check against a rejected answer, card uniqueness, and the learning shift.
+The suite runs complete tournaments with simulated agents. It covers judges who always disagree (every match goes to a tiebreak), missing outputs (placeholders and retries), test-decided code matches (and checks that the project is left untouched), the final check against a rejected answer, card uniqueness, and the learning shift. It also covers merges being accepted, rejected without a unanimous verdict, and rejected for breaking tests, plus per-role model routing and the dashboard.
 
 ## Limits
 

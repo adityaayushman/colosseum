@@ -44,6 +44,8 @@ class Sim:
                 if jid.startswith("D-") and self.passing:
                     cid = jid[2:]
                     C.wr(os.path.join(C.files_dir(d, cid, 0), "flag.txt"), "ok" if self.passing(cid) else "no")
+                if jid == "M-merge" and self.passing:
+                    C.wr(os.path.join(C.files_dir(d, C.MERGED, 0), "flag.txt"), "ok" if self.passing(C.MERGED) else "no")
             elif kind[0] == "revise":
                 cid = kind[1]
                 C.wr(outs[0], "revised %s\n" % cid)
@@ -54,7 +56,9 @@ class Sim:
                 C.wr(outs[0], json.dumps({"scores": {c: self.rng.randint(20, 95) for c in kind[1]}}))
             elif kind[0] == "verdict":
                 a, b = kind[1], kind[2]
-                if self.judge_mode == "first":      # always prefers whoever is shown first -> judges disagree
+                if self.judge_mode == "prefer-merged" and C.MERGED in (a, b):
+                    prefer = C.MERGED
+                elif self.judge_mode == "first":      # always prefers whoever is shown first -> judges disagree
                     prefer = a
                 elif self.judge_mode == "lower-id":
                     prefer = min(a, b)
@@ -134,7 +138,7 @@ class TestRuns(Base):
         self.assertEqual(st["phase"], "done")
         self.assertIn(st["champion"], st["ids"])
         self.assertEqual(len(st["history"]), 2)
-        self.assertEqual(st["calls"], 12 + 4 + 6 * 3 + sum(1 for h in st["history"] for m in h["matches"] if m["by"] == "tiebreak" or m["by"] == "fallback-screen-score"))
+        self.assertEqual(st["calls"], 12 + 4 + 6 * 3 + 3 + sum(1 for h in st["history"] for m in h["matches"] if m["by"] == "tiebreak" or m["by"] == "fallback-screen-score"))
         self.assertTrue(os.path.exists(C.stats_path()))
         self.assertEqual(run_cli("champion")[0], 0)
         self.assertEqual(run_cli("report")[0], 0)
@@ -181,6 +185,83 @@ class TestRuns(Base):
         d, st = C.load()
         self.assertEqual(set(st["final"]), {"a", "b"})
         self.assertIn("champion", st["final"]["a"])
+
+    def test_merge_accepted_when_both_judges_prefer_it(self):
+        run_cli("init", "--quick", "--seed", "11", "--task-file", "task.md")
+        out = drive(Sim(7, judge_mode="prefer-merged"))
+        d, st = C.load()
+        self.assertTrue(st["merge"]["accepted"])
+        self.assertEqual(st["delivered"], C.MERGED)
+        self.assertEqual(len(st["merge"]["sources"]), 3)
+        self.assertIn("delivered answer: merged", out)
+        self.assertIn(C.sol(d, C.MERGED, 0), run_cli("champion")[1])
+
+    def test_merge_rejected_unless_unanimous(self):
+        run_cli("init", "--quick", "--seed", "12", "--task-file", "task.md")
+        drive(Sim(8, judge_mode="lower-id"))
+        d, st = C.load()
+        self.assertFalse(st["merge"]["accepted"])
+        self.assertEqual(st["delivered"], st["champion"])
+
+    def test_merge_off(self):
+        run_cli("init", "--quick", "--seed", "13", "--merge", "0", "--task-file", "task.md")
+        drive(Sim(9))
+        d, st = C.load()
+        self.assertEqual(st["merge"]["by"], "merge off")
+        self.assertFalse(os.path.exists(os.path.join(d, "briefs", "M-merge.md")))
+
+    def test_merge_rejected_when_it_breaks_tests(self):
+        proj = os.path.join(self.tmp, "proj")
+        C.wr(os.path.join(proj, "flag.txt"), "no")
+        cmd = "python3 -c \"import sys; sys.exit(0 if open('flag.txt').read().strip()=='ok' else 1)\""
+        run_cli("init", "--quick", "--seed", "14", "--task-file", "task.md", "--kind", "code", "--test-cmd", cmd, "--project", proj)
+        drive(Sim(10, judge_mode="prefer-merged", passing=lambda c: c in {"c01", "c04", "c07", "c09"}))
+        d, st = C.load()
+        self.assertFalse(st["merge"]["accepted"])
+        self.assertTrue(st["merge"]["by"].startswith("tests"))
+        self.assertFalse(os.path.exists(os.path.join(d, "briefs", "MJ-a.md")))
+
+    def test_models_per_role(self):
+        run_cli("init", "--quick", "--seed", "15", "--models", "draft=haiku,judge=opus", "--task-file", "task.md")
+        rc, out = run_cli("next")
+        self.assertIn("MODEL: haiku", out)
+        self.assertIn("Pass model: haiku", out)
+        sim = Sim(11)
+        seen = set()
+        for _ in range(60):
+            d, st = C.load()
+            sim.answer(st, d)
+            rc, out = run_cli("next")
+            for line in out.splitlines():
+                if line.startswith("PHASE"):
+                    seen.add((line.split(":")[0], line.rsplit("MODEL: ", 1)[1]))
+            if out.startswith("DONE"):
+                break
+        self.assertIn(("PHASE screening", "sonnet"), seen)
+        self.assertTrue(any(p.startswith("PHASE judging") and m == "opus" for p, m in seen))
+        d, st = C.load()
+        self.assertEqual(st["calls_by_model"]["haiku"], 12)
+        self.assertEqual(sum(st["calls_by_model"].values()), st["calls"])
+
+    def test_model_presets_and_errors(self):
+        self.assertEqual(C.parse_models("", True)["draft"], "haiku")
+        self.assertEqual(set(C.parse_models("all=inherit").values()), {"inherit"})
+        self.assertEqual(run_cli("plan", "--models", "draft=gpt")[0], 1)
+        self.assertEqual(run_cli("plan", "--models", "chef=haiku")[0], 1)
+
+    def test_dashboard_and_run_log(self):
+        for seed in (21, 22):
+            run_cli("init", "--quick", "--seed", str(seed), "--kind", "writing", "--task-file", "task.md")
+            drive(Sim(seed))
+        runs = C.jload(C.runs_path())
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(runs[0]["kind"], "writing")
+        rc, out = run_cli("dashboard", "--out", "dash.html")
+        self.assertEqual(rc, 0)
+        html = C.rd("dash.html")
+        self.assertIn('"writing"', html)
+        self.assertNotIn("__DATA__", html)
+        self.assertEqual(html.count("<script>"), 1)
 
     def test_plan(self):
         rc, out = run_cli("plan")
